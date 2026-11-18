@@ -23,17 +23,18 @@
     <main class="sprint-view">
       <section class="day-panel" aria-labelledby="day-heading">
         <div class="day-heading">
-          <div class="day-title">
-            <h2 id="day-heading">每日记录</h2>
-            <span>{{ selectedDateLabel }}</span>
-          </div>
+          <h2 id="day-heading">每日记录</h2>
           <button v-if="!isToday" class="today-button" type="button" @click="selectedDate = today()">回到今天</button>
         </div>
         <div class="day-controls">
           <button type="button" aria-label="前一天" @click="changeDay(-1)">
             <el-icon><ArrowLeft /></el-icon>
           </button>
-          <input :value="selectedDate" type="date" aria-label="记录日期" @change="selectDate" />
+          <label class="date-picker">
+            <el-icon><Calendar /></el-icon>
+            <span>{{ selectedDateLabel }}</span>
+            <input :value="selectedDate" type="date" aria-label="选择记录日期" @click="openDatePicker" @change="selectDate" />
+          </label>
           <button type="button" aria-label="后一天" @click="changeDay(1)">
             <el-icon><ArrowRight /></el-icon>
           </button>
@@ -256,6 +257,15 @@ function selectDate(event: Event) {
   const input = event.target as HTMLInputElement;
   if (isRecordDate(input.value)) selectedDate.value = input.value;
   else input.value = selectedDate.value;
+}
+
+function openDatePicker(event: MouseEvent) {
+  const input = event.currentTarget as HTMLInputElement;
+  try {
+    input.showPicker?.();
+  } catch {
+    input.focus();
+  }
 }
 
 function changeDay(offset: number) {
@@ -747,17 +757,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   min-height: 44px;
 }
 
-.day-title {
-  min-width: 0;
-}
-
-.day-title span {
-  display: block;
-  margin-top: 4px;
-  color: rgba(255, 255, 255, 0.82);
-  font-size: 13px;
-}
-
 .day-heading h2, .log-heading h2 {
   margin: 0;
   font-size: 20px;
@@ -787,35 +786,58 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   background: rgba(255, 255, 255, 0.14);
 }
 
-.day-controls button, .day-controls input {
+.day-controls button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
+  flex: none;
+  width: 40px;
+  min-height: 40px;
   border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #fff;
+  font-size: 16px;
+}
+
+.date-picker {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 8px;
   border-radius: 10px;
   color: #fff;
   font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
-.day-controls button {
-  flex: none;
-  width: 40px;
-  background: transparent;
+.date-picker span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.day-controls input {
-  flex: 1;
-  min-width: 0;
-  padding: 0 10px;
-  background: var(--surface);
-  color: var(--text-strong);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
+.date-picker input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
 }
 
-.day-controls button:active, .today-button:active {
+.date-picker:focus-within {
+  outline: 2px solid rgba(255, 255, 255, 0.7);
+  outline-offset: 0;
+}
+
+.day-controls button:active, .date-picker:active, .today-button:active {
   background: rgba(255, 255, 255, 0.24);
 }
 

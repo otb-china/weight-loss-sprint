@@ -1,14 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="15" fill="#fff1e8"/>
   <defs>
-    <linearGradient id="mango" x1="0" y1="1" x2="1" y2="0">
-      <stop stop-color="#ffcc40"/>
-      <stop offset=".55" stop-color="#ffa51f"/>
-      <stop offset="1" stop-color="#f27533"/>
+    <linearGradient id="peel" x1="18" y1="22" x2="44" y2="52" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffe96b"/>
+      <stop offset="1" stop-color="#f5bd25"/>
     </linearGradient>
   </defs>
-  <path fill="#217a4e" d="M40 17c2-7 8-10 16-9-2 7-8 11-16 9Z"/>
-  <path d="M39 23c1-4 3-7 6-9" fill="none" stroke="#217a4e" stroke-width="3" stroke-linecap="round"/>
-  <path fill="url(#mango)" d="M39 18c10 0 16 8 15 17-1 13-12 22-26 22-8 0-15-3-19-8 7-1 10-7 12-14 3-10 9-17 18-17Z"/>
-  <path d="M26 36c2-6 6-10 11-11" fill="none" stroke="#ffe18a" stroke-width="3" stroke-linecap="round"/>
+  <rect width="64" height="64" rx="15" fill="#fff8d8"/>
+  <path d="M37 25c2-5 5-8 10-11" fill="none" stroke="#236747" stroke-width="3" stroke-linecap="round"/>
+  <path fill="#2c8056" d="M40 19c2-8 9-11 17-10-2 8-9 12-17 10Z"/>
+  <g transform="rotate(-29 32 37)">
+    <path fill="url(#peel)" stroke="#d29113" stroke-width="1.5"
+      d="M8 37c0-2 3-3 5-5 4-7 11-11 19-11s15 4 19 11c2 2 5 3 5 5s-3 3-5 5c-4 7-11 11-19 11s-15-4-19-11c-2-2-5-3-5-5Z"/>
+    <path d="M20 33c3-4 7-6 12-6" fill="none" stroke="#fff4af" stroke-width="2.6" stroke-linecap="round"/>
+  </g>
 </svg>

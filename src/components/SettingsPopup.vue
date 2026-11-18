@@ -57,7 +57,7 @@
           </span>
           <span>
             <strong>回收站</strong>
-            <em>{{ recycleCount }} 个物品，一周内可恢复</em>
+            <em>{{ recycleCount }} 条记录，一周内可恢复</em>
           </span>
         </button>
 
@@ -67,7 +67,7 @@
           </span>
           <span>
             <strong>重置数据</strong>
-            <em>清除全部饮食反应记录</em>
+            <em>清除饮食、体重和运动记录</em>
           </span>
         </button>
       </div>

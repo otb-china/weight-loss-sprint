@@ -1,18 +1,21 @@
-export interface AllergenItem {
+export type RecordKind = "food" | "weight" | "exercise";
+
+interface RecordBase {
   id: string;
-  name: string;
   recordedAt: string;
-  suspected: boolean;
   note: string;
-  rating: number;
   updatedAt: string;
 }
 
-export interface DeletedAllergenItem extends AllergenItem {
-  deletedAt: string;
-}
+export type SprintRecord = RecordBase & (
+  | { kind: "food"; name: string }
+  | { kind: "weight"; kilograms: number }
+  | { kind: "exercise"; name: string; minutes: number }
+);
 
-export interface AllergenBackupData {
-  items?: unknown;
-  deletedItems?: unknown;
+export type DeletedSprintRecord = SprintRecord & { deletedAt: string };
+
+export interface SprintData {
+  items: SprintRecord[];
+  deletedItems: DeletedSprintRecord[];
 }

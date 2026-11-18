@@ -6,7 +6,7 @@ export const fixRoutes: RouteRecordRaw[] = [
     path: '/',
     component: () => import('@/views/Home.vue'),
     meta: {
-      title: '饮食反应记录',
+      title: '减肥冲刺！！！',
       header: true,
       icon: "House",
     }

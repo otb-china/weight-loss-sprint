@@ -1,27 +1,18 @@
-# allergen-search
+# weight-loss-sprint
 
-寻找过敏源单页面应用，用于记录物品名称、数量和单位。
+减肥冲刺！！！一个按天记录饮食、体重和运动时长的网页。
 
-## 功能
+- 饮食记录当天吃了什么，可补充份量和备注。
+- 体重以公斤记录，运动时长以分钟记录。
+- 可按日期查看、补录和编辑。数据保存在当前浏览器，可通过设置导出或合并导入 JSON 备份。
+- 移除的记录会在回收站保留七天。
 
-- 顶部搜索框按名称筛选过敏源相关物品
-- 瀑布流展示物品名称、数量和单位
-- 点击新增按钮弹窗创建物品
-- 表单支持名称、数量、单位选择
-- 右上角齿轮保留主题、导入、导出、回收站和重置数据
-- 备份 JSON 使用过敏源数据结构并保存在浏览器 localStorage
-
-## 开发
+## 本地开发
 
 ```bash
 pnpm install
-pnpm run dev
+pnpm dev
+npx vue-tsc --noEmit -p tsconfig.app.json
 ```
 
-## 打包
-
-```bash
-pnpm run build
-```
-
-构建产物输出到 `docs/`，可用于 GitHub Pages。
+推送到 `master` 后，GitHub Actions 自动构建并部署到 GitHub Pages。

@@ -86,6 +86,49 @@
           <span>点击上方卡片，记下饮食、体重或运动</span>
         </div>
       </section>
+      <section class="analysis-panel" aria-labelledby="analysis-heading">
+        <div class="log-heading">
+          <h2 id="analysis-heading">记录分析</h2>
+          <span>截至今天</span>
+        </div>
+
+        <div class="analysis-section">
+          <h3><span class="summary-icon weight"><el-icon><Odometer /></el-icon></span>体重变化</h3>
+          <dl class="analysis-grid">
+            <div v-for="period in weightAnalysis" :key="period.label" class="analysis-stat" :class="changeTone(period.change)">
+              <dt>{{ period.label }}</dt>
+              <dd>
+                <template v-if="period.change === null">
+                  <span class="analysis-empty">记录不足</span>
+                </template>
+                <template v-else>
+                  <span class="analysis-value">
+                    <el-icon v-if="period.change !== 0"><component :is="period.change < 0 ? Bottom : Top" /></el-icon>
+                    {{ period.change === 0 ? "持平" : Math.abs(period.change) }}<small v-if="period.change !== 0">公斤</small>
+                  </span>
+                  <small class="analysis-dates">{{ period.dates }}</small>
+                </template>
+              </dd>
+            </div>
+          </dl>
+          <p class="analysis-note">近 7 天 / 近 30 天内，首条与最新体重对比</p>
+        </div>
+
+        <div class="analysis-section">
+          <h3><span class="summary-icon exercise"><el-icon><Timer /></el-icon></span>运动天数</h3>
+          <dl class="analysis-grid exercise-analysis">
+            <div class="analysis-stat">
+              <dt>累计运动</dt>
+              <dd><span class="analysis-value">{{ exerciseAnalysis.total }}<small>天</small></span></dd>
+            </div>
+            <div class="analysis-stat" :class="{ streak: exerciseAnalysis.streak > 0 }">
+              <dt>连续运动</dt>
+              <dd><span class="analysis-value">{{ exerciseAnalysis.streak }}<small>天</small></span></dd>
+            </div>
+          </dl>
+          <p class="analysis-note">同一天多次运动计 1 天；今天未运动时从昨天起算连续天数</p>
+        </div>
+      </section>
     </main>
 
     <van-popup v-model:show="editorPopup" class="edit-popup" round destroy-on-close>
@@ -182,7 +225,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import dayjs from "dayjs";
 import { showConfirmDialog, showToast } from "vant";
-import { ArrowLeft, ArrowRight, Calendar, Close, Food, Odometer, Plus, Setting, Timer, Top } from "@element-plus/icons-vue";
+import { ArrowLeft, ArrowRight, Bottom, Calendar, Close, Food, Odometer, Plus, Setting, Timer, Top } from "@element-plus/icons-vue";
 import ImportDataPopup from "@/components/ImportDataPopup.vue";
 import SettingsPopup from "@/components/SettingsPopup.vue";
 import { DEFAULT_THEME, isThemeKey, themeOptions, type ThemeKey } from "@/config/themes";
@@ -206,7 +249,8 @@ const deletedItems = computed(() => data.value.deletedItems.filter(isInRecycleWi
 const currentTheme = ref<ThemeKey>(DEFAULT_THEME);
 const currentThemeOption = computed(() => themeOptions.find((theme) => theme.key === currentTheme.value) ?? themeOptions[0]);
 const themeStyle = computed(() => currentThemeOption.value.variables);
-const selectedDate = ref(today());
+const analysisDate = ref(today());
+const selectedDate = ref(analysisDate.value);
 const showScrollTop = ref(false);
 const settingsPopup = ref(false);
 const recyclePopup = ref(false);
@@ -226,11 +270,11 @@ const dayRecords = computed(() =>
   items.value.filter((item) => item.recordedAt === selectedDate.value)
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)),
 );
-const isToday = computed(() => selectedDate.value === today());
+const isToday = computed(() => selectedDate.value === analysisDate.value);
 const selectedDateLabel = computed(() => {
   const date = dayjs(selectedDate.value);
   const weekday = "日一二三四五六"[date.day()];
-  const offset = date.diff(dayjs(today()), "day");
+  const offset = date.diff(dayjs(analysisDate.value), "day");
   const relative = offset === 0 ? " · 今天" : offset === -1 ? " · 昨天" : offset === 1 ? " · 明天" : "";
   return `${date.format("M月D日")} 周${weekday}${relative}`;
 });
@@ -244,6 +288,54 @@ const summaryCards = computed(() => {
     { kind: "exercise", icon: icons.exercise, value: minutes, unit: "分钟" },
   ] as const;
 });
+
+const weightAnalysis = computed(() => {
+  const weights = items.value
+    .filter((item) => item.kind === "weight")
+    .filter((item) => item.recordedAt <= analysisDate.value)
+    .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt) || Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
+  const latest = weights[weights.length - 1];
+  const end = dayjs(analysisDate.value);
+  const periods = [
+    { label: "近一周", start: end.subtract(6, "day").format(DATE_FORMAT) },
+    { label: "近一月", start: end.subtract(29, "day").format(DATE_FORMAT) },
+    { label: "较最初", start: weights[0]?.recordedAt },
+  ];
+
+  return periods.map(({ label, start }) => {
+    const first = start && weights.find((item) => item.recordedAt >= start);
+    if (!first || !latest || first === latest) return { label, change: null, dates: "" };
+    const change = Number((latest.kilograms - first.kilograms).toFixed(2));
+    const dateLabel = (date: string) => dayjs(date).format("M月D日");
+    return {
+      label,
+      change,
+      dates: `${dateLabel(first.recordedAt)} – ${dateLabel(latest.recordedAt)}`,
+    };
+  });
+});
+
+const exerciseAnalysis = computed(() => {
+  const date = analysisDate.value;
+  const exerciseDays = new Set(items.value
+    .filter((item) => item.kind === "exercise" && item.recordedAt <= date)
+    .map((item) => item.recordedAt));
+  let day = dayjs(date);
+  if (!exerciseDays.has(date)) day = day.subtract(1, "day");
+  let streak = 0;
+  while (exerciseDays.has(day.format(DATE_FORMAT))) {
+    streak += 1;
+    day = day.subtract(1, "day");
+  }
+  return { total: exerciseDays.size, streak };
+});
+
+function changeTone(change: number | null) {
+  if (change === null) return "empty";
+  if (change < 0) return "down";
+  if (change > 0) return "up";
+  return "flat";
+}
 
 function today() {
   return dayjs().format(DATE_FORMAT);
@@ -518,6 +610,8 @@ function updateScrollTopVisibility() {
   showScrollTop.value = window.scrollY > 240;
 }
 
+let analysisDateTimer: number | undefined;
+
 onMounted(() => {
   try {
     const storedTheme: unknown = themeStorage.getter();
@@ -527,10 +621,14 @@ onMounted(() => {
   }
   updateScrollTopVisibility();
   window.addEventListener("scroll", updateScrollTopVisibility, { passive: true });
+  analysisDateTimer = window.setInterval(() => {
+    analysisDate.value = today();
+  }, 60_000);
 });
 
 onUnmounted(() => {
   window.removeEventListener("scroll", updateScrollTopVisibility);
+  window.clearInterval(analysisDateTimer);
 });
 </script>
 
@@ -716,7 +814,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .sprint-view {
   width: min(100%, 780px);
   margin: 0 auto;
-  padding: 20px 4px max(28px, env(safe-area-inset-bottom));
+  padding: 20px 4px calc(16px + env(safe-area-inset-bottom));
 }
 
 .day-panel {
@@ -937,12 +1035,117 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   font-weight: 700;
 }
 
-.log-panel {
+.log-panel, .analysis-panel {
   margin-top: 18px;
   padding: clamp(16px, 4vw, 24px);
   border-radius: 20px;
   background: var(--surface);
   box-shadow: var(--header-shadow);
+}
+
+.analysis-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--divider);
+}
+
+.analysis-panel h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  color: var(--text-strong);
+  font-size: 15px;
+}
+
+.analysis-panel h3 .summary-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.exercise-analysis {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.analysis-stat {
+  min-width: 0;
+  padding: 12px clamp(8px, 2.5vw, 14px);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+.analysis-stat.down { background: #e9f6ef; }
+.analysis-stat.up { background: #fff3e6; }
+.analysis-stat.streak { background: #e9f6ef; }
+
+.analysis-stat dt {
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.analysis-stat dd {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+}
+
+.analysis-value {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  color: var(--text-strong);
+  font-size: clamp(18px, 5vw, 24px);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.analysis-value .el-icon {
+  align-self: center;
+  font-size: 0.75em;
+}
+
+.analysis-value small {
+  margin-left: 2px;
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.analysis-stat.down .analysis-value, .analysis-stat.streak .analysis-value { color: #1f8a55; }
+.analysis-stat.up .analysis-value { color: #c06a12; }
+
+.analysis-empty {
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 26px;
+}
+
+.analysis-dates {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analysis-note {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .log-heading > span {

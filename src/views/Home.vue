@@ -13,7 +13,7 @@
           <button v-if="showScrollTop" class="header-icon" type="button" aria-label="返回顶部" @click="scrollToTop">
             <el-icon><Top /></el-icon>
           </button>
-          <button class="header-icon" type="button" aria-label="设置" @click="settingsPopup = true">
+          <button class="header-icon" type="button" aria-label="设置" :disabled="!recordsReady" @click="settingsPopup = true">
             <el-icon><Setting /></el-icon>
           </button>
         </div>
@@ -41,21 +41,27 @@
         </div>
 
         <div class="summary-grid">
-          <button
+          <div
             v-for="card in summaryCards"
             :key="card.kind"
             class="summary-card"
-            type="button"
-            @click="openEditor(card.kind)"
           >
-            <span class="summary-top">
-              <span class="summary-icon" :class="card.kind"><el-icon><component :is="card.icon" /></el-icon></span>
-              <span class="summary-label">{{ labels[card.kind] }}</span>
-            </span>
-            <strong :class="{ placeholder: card.value === '—' }">{{ card.value }}<small v-if="card.unit">{{ card.unit }}</small></strong>
-            <span class="summary-action"><el-icon><Plus /></el-icon>记录</span>
-          </button>
+            <button class="summary-main" type="button" :disabled="!recordsReady" @click="openEditor(card.kind)">
+              <span class="summary-top">
+                <span class="summary-icon" :class="card.kind"><el-icon><component :is="card.icon" /></el-icon></span>
+                <span class="summary-label">{{ labels[card.kind] }}</span>
+              </span>
+              <strong :class="{ placeholder: card.value === '—' }">{{ card.value }}<small v-if="card.unit">{{ card.unit }}</small></strong>
+              <span class="summary-action"><el-icon><Plus /></el-icon>记录</span>
+            </button>
+            <button class="summary-action camera-action" type="button" :disabled="!recordsReady"
+              :aria-label="'拍照记录' + labels[card.kind]" @click="takePhoto(card.kind)">
+              <el-icon><Camera /></el-icon>拍照
+            </button>
+          </div>
         </div>
+        <input ref="cameraInput" type="file" accept="image/*" capture="environment" hidden @change="onPhotoSelected" />
+        <input ref="galleryInput" type="file" accept="image/*" hidden @change="onPhotoSelected" />
       </section>
 
       <section class="log-panel" aria-labelledby="log-heading">
@@ -64,21 +70,20 @@
           <span>{{ dayRecords.length }} 条</span>
         </div>
         <div v-if="dayRecords.length" class="record-list">
-          <button
-            v-for="item in dayRecords"
-            :key="item.id"
-            class="record-row"
-            type="button"
-            @click="openEditor(item.kind, item)"
-          >
-            <span class="summary-icon" :class="item.kind"><el-icon><component :is="icons[item.kind]" /></el-icon></span>
-            <span class="record-copy">
-              <strong>{{ recordTitle(item) }}</strong>
-              <span v-if="item.note">{{ item.note }}</span>
-            </span>
-            <span class="record-kind" :class="item.kind">{{ labels[item.kind] }}</span>
-            <el-icon class="record-arrow"><ArrowRight /></el-icon>
-          </button>
+          <div v-for="item in dayRecords" :key="item.id" class="record-entry">
+            <button v-if="item.photo" class="record-thumbnail" type="button" aria-label="查看记录照片" @click="previewPhoto(item.photo)">
+              <img :src="item.photo" alt="" loading="lazy" />
+            </button>
+            <button class="record-row" type="button" @click="openEditor(item.kind, item)">
+              <span class="summary-icon" :class="item.kind"><el-icon><component :is="icons[item.kind]" /></el-icon></span>
+              <span class="record-copy">
+                <strong>{{ recordTitle(item) }}</strong>
+                <span v-if="item.note">{{ item.note }}</span>
+              </span>
+              <span class="record-kind" :class="item.kind">{{ item.kind === 'food' && item.meal ? mealLabels[item.meal] : labels[item.kind] }}</span>
+              <el-icon class="record-arrow"><ArrowRight /></el-icon>
+            </button>
+          </div>
         </div>
         <div v-else class="empty-state">
           <el-icon class="empty-icon"><Calendar /></el-icon>
@@ -131,11 +136,11 @@
       </section>
     </main>
 
-    <van-popup v-model:show="editorPopup" class="edit-popup" round destroy-on-close>
+    <van-popup v-model:show="editorPopup" class="edit-popup" :close-on-click-overlay="!saving" round destroy-on-close>
       <form class="popup-body editor-form" @submit.prevent="saveItem">
         <div class="popup-head">
           <h3>{{ editingItemId ? "编辑" : "记录" }}{{ labels[form.kind] }}</h3>
-          <button class="header-icon" type="button" aria-label="关闭" @click="editorPopup = false">
+          <button class="header-icon" type="button" aria-label="关闭" :disabled="saving" @click="editorPopup = false">
             <el-icon><Close /></el-icon>
           </button>
         </div>
@@ -143,9 +148,27 @@
           日期
           <input v-model="form.recordedAt" type="date" required />
         </label>
+        <div class="photo-field">
+          <button v-if="form.photo" class="editor-photo" type="button" aria-label="查看记录照片" @click="previewPhoto(form.photo)">
+            <img :src="form.photo" alt="" />
+          </button>
+          <div class="photo-actions">
+            <button type="button" :disabled="photoBusy || saving" @click="takePhoto()"><el-icon><Camera /></el-icon>拍照</button>
+            <button type="button" :disabled="photoBusy || saving" @click="galleryInput?.click()">从相册选图</button>
+            <button v-if="form.photo" type="button" :disabled="saving" @click="removePhoto">移除照片</button>
+          </div>
+          <p v-if="photoStatus" class="photo-status" role="status">{{ photoStatus }}</p>
+        </div>
+        <label v-if="form.kind === 'food'">
+          餐次
+          <select v-model="form.meal">
+            <option value="">请选择</option>
+            <option v-for="(label, meal) in mealLabels" :key="meal" :value="meal">{{ label }}</option>
+          </select>
+        </label>
         <label v-if="form.kind !== 'weight'">
-          {{ form.kind === "food" ? "吃了什么" : "运动项目（选填）" }}
-          <input v-model.trim="form.name" :required="form.kind === 'food'"
+          {{ form.kind === "food" ? (form.photo ? "吃了什么（选填）" : "吃了什么") : "运动项目（选填）" }}
+          <input v-model.trim="form.name" :required="form.kind === 'food' && !form.photo"
             :placeholder="form.kind === 'food' ? '例如：一碗燕麦粥、一个鸡蛋' : '例如：快走'" />
         </label>
         <label v-if="form.kind === 'weight'">
@@ -154,15 +177,24 @@
         </label>
         <label v-if="form.kind === 'exercise'">
           运动时长（分钟）
-          <input v-model.number="form.amount" type="number" inputmode="numeric" min="1" step="1" placeholder="例如：30" required />
+          <input v-model.number="form.amount" type="number" inputmode="numeric" min="1" step="1" placeholder="例如：30"
+            :required="form.distanceKm === '' && form.calories === ''" />
         </label>
+        <div v-if="form.kind === 'exercise'" class="exercise-fields">
+          <label>距离（公里）
+            <input v-model.number="form.distanceKm" type="number" inputmode="decimal" min="0.01" step="any" />
+          </label>
+          <label>热量（千卡）
+            <input v-model.number="form.calories" type="number" inputmode="decimal" min="0.01" step="any" />
+          </label>
+        </div>
         <label>
           备注（选填）
           <textarea v-model.trim="form.note" rows="2" />
         </label>
         <div class="editor-actions">
-          <button v-if="editingItemId" class="danger" type="button" @click="removeItem(editingItemId)">移入回收站</button>
-          <button class="save-button" type="submit">保存</button>
+          <button v-if="editingItemId" class="danger" type="button" :disabled="saving" @click="removeItem(editingItemId)">移入回收站</button>
+          <button class="save-button" type="submit" :disabled="photoBusy || saving">保存</button>
         </div>
       </form>
     </van-popup>
@@ -222,15 +254,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import dayjs from "dayjs";
-import { showConfirmDialog, showToast } from "vant";
-import { ArrowLeft, ArrowRight, Bottom, Calendar, Close, Food, Odometer, Plus, Setting, Timer, Top } from "@element-plus/icons-vue";
+import { showConfirmDialog, showImagePreview, showToast } from "vant";
+import { ArrowLeft, ArrowRight, Bottom, Calendar, Camera, Close, Food, Odometer, Plus, Setting, Timer, Top } from "@element-plus/icons-vue";
 import ImportDataPopup from "@/components/ImportDataPopup.vue";
 import SettingsPopup from "@/components/SettingsPopup.vue";
 import { DEFAULT_THEME, isThemeKey, themeOptions, type ThemeKey } from "@/config/themes";
 import { LStorage } from "@/utils/localStorage";
-import type { DeletedSprintRecord, RecordKind, SprintData, SprintRecord } from "@/types/tool";
+import { mealLabels, type DeletedSprintRecord, type Meal, type RecordKind, type SprintData, type SprintRecord } from "@/types/tool";
+import { prepareRecordPhoto, recognizeRecordPhoto } from "@/utils/recordPhoto";
+import { readStoredRecords, writeStoredRecords } from "@/utils/sprintStorage";
 import logoUrl from "@/assets/weight-loss-sprint-icon.svg";
 
 const PROJECT = "weight-loss-sprint";
@@ -243,7 +277,10 @@ const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 const dataStorage = LStorage.new(`${PROJECT}:records`);
 const themeStorage = LStorage.new(`${PROJECT}:theme`);
-const data = ref(readData());
+let storedSnapshot: string | undefined;
+const data = ref<SprintData>({ items: [], deletedItems: [] });
+const recordsReady = ref(false);
+const saving = ref(false);
 const items = computed(() => data.value.items);
 const deletedItems = computed(() => data.value.deletedItems.filter(isInRecycleWindow));
 const currentTheme = ref<ThemeKey>(DEFAULT_THEME);
@@ -256,13 +293,27 @@ const settingsPopup = ref(false);
 const recyclePopup = ref(false);
 const editorPopup = ref(false);
 const editingItemId = ref("");
+const cameraInput = ref<HTMLInputElement>();
+const galleryInput = ref<HTMLInputElement>();
+const photoBusy = ref(false);
+const photoStatus = ref("");
+let cameraKind: RecordKind | undefined;
+let photoAttempt = 0;
+let photoRecognition: AbortController | undefined;
 const form = reactive({
   kind: "food" as RecordKind,
   name: "",
   amount: "" as number | string,
+  meal: "" as Meal | "",
+  distanceKm: "" as number | string,
+  calories: "" as number | string,
+  photo: "",
   recordedAt: "",
   note: "",
 });
+watch(editorPopup, (shown) => {
+  if (!shown) resetPhotoAttempt();
+}, { flush: "sync" });
 const importExportInfo = ref({ show: false });
 const importInfo = ref({ dataStr: "", fileName: "" });
 
@@ -281,7 +332,7 @@ const selectedDateLabel = computed(() => {
 const summaryCards = computed(() => {
   const weight = dayRecords.value.find((item) => item.kind === "weight");
   const foodCount = dayRecords.value.filter((item) => item.kind === "food").length;
-  const minutes = dayRecords.value.reduce((total, item) => total + (item.kind === "exercise" ? item.minutes : 0), 0);
+  const minutes = dayRecords.value.reduce((total, item) => total + (item.kind === "exercise" ? item.minutes ?? 0 : 0), 0);
   return [
     { kind: "food", icon: icons.food, value: foodCount, unit: "条" },
     { kind: "weight", icon: icons.weight, value: weight?.kilograms ?? "—", unit: weight ? "公斤" : "" },
@@ -369,21 +420,31 @@ function isPositiveNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function isPhoto(value: unknown): value is string {
+  return typeof value === "string" && /^data:image\/jpeg;base64,[a-z0-9+/]+=*$/i.test(value);
+}
+
 function isSprintRecord(value: unknown): value is SprintRecord {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   if (
     typeof record.id !== "string" || !record.id ||
     !isRecordDate(record.recordedAt) || typeof record.note !== "string" ||
-    typeof record.updatedAt !== "string" || !Number.isFinite(Date.parse(record.updatedAt))
+    typeof record.updatedAt !== "string" || !Number.isFinite(Date.parse(record.updatedAt)) ||
+    (record.photo !== undefined && !isPhoto(record.photo))
   ) return false;
   switch (record.kind) {
     case "food":
-      return typeof record.name === "string" && Boolean(record.name.trim());
+      return typeof record.name === "string" && Boolean(record.name.trim() || record.photo) &&
+        (record.meal === undefined || (typeof record.meal === "string" && Object.prototype.hasOwnProperty.call(mealLabels, record.meal)));
     case "weight":
       return isPositiveNumber(record.kilograms);
     case "exercise":
-      return typeof record.name === "string" && isPositiveNumber(record.minutes) && Number.isSafeInteger(record.minutes);
+      return typeof record.name === "string" &&
+        (record.minutes === undefined || (isPositiveNumber(record.minutes) && Number.isSafeInteger(record.minutes))) &&
+        (record.distanceKm === undefined || isPositiveNumber(record.distanceKm)) &&
+        (record.calories === undefined || isPositiveNumber(record.calories)) &&
+        Boolean(record.minutes ?? record.distanceKm ?? record.calories);
     default:
       return false;
   }
@@ -401,24 +462,37 @@ function isSprintData(value: unknown): value is SprintData {
     Array.isArray(candidate.deletedItems) && candidate.deletedItems.every(isDeletedRecord);
 }
 
-function readData(): SprintData {
+async function loadRecords() {
   try {
-    const stored: unknown = dataStorage.getter();
-    if (isSprintData(stored)) return stored;
+    storedSnapshot = await readStoredRecords();
+    const stored: unknown = storedSnapshot === undefined ? dataStorage.getter() : JSON.parse(storedSnapshot);
+    if (stored !== undefined) {
+      if (!isSprintData(stored)) throw new Error("Invalid records");
+      data.value = stored;
+    }
+    recordsReady.value = true;
   } catch {
     showToast("读取本地记录失败");
   }
-  return { items: [], deletedItems: [] };
 }
 
-function persist(next: SprintData) {
+async function persist(next: SprintData) {
+  if (!recordsReady.value || saving.value) return false;
+  saving.value = true;
   try {
-    dataStorage.setter(next);
+    const snapshot = JSON.stringify(next);
+    if (!await writeStoredRecords(snapshot, storedSnapshot)) {
+      showToast("其他页面已更新记录，请刷新后重试");
+      return false;
+    }
+    storedSnapshot = snapshot;
     data.value = next;
     return true;
   } catch {
     showToast("保存失败，请检查浏览器存储空间");
     return false;
+  } finally {
+    saving.value = false;
   }
 }
 
@@ -433,40 +507,129 @@ function setTheme(theme: ThemeKey) {
 
 function recordTitle(item: SprintRecord) {
   switch (item.kind) {
-    case "food": return item.name;
+    case "food": return item.name || "饮食照片";
     case "weight": return `${item.kilograms} 公斤`;
-    case "exercise": return item.name ? `${item.name} · ${item.minutes} 分钟` : `${item.minutes} 分钟`;
+    case "exercise": return [
+      item.name,
+      item.minutes && `${item.minutes} 分钟`,
+      item.distanceKm && `${item.distanceKm} 公里`,
+      item.calories && `${item.calories} 千卡`,
+    ].filter(Boolean).join(" · ");
   }
 }
 
 function openEditor(kind: RecordKind, item?: SprintRecord) {
+  resetPhotoAttempt();
   editingItemId.value = item?.id ?? "";
   form.kind = kind;
   form.name = item && item.kind !== "weight" ? item.name : "";
-  form.amount = item?.kind === "weight" ? item.kilograms : item?.kind === "exercise" ? item.minutes : "";
+  form.amount = item?.kind === "weight" ? item.kilograms : (item?.kind === "exercise" ? item.minutes ?? "" : "");
+  form.meal = item?.kind === "food" ? item.meal ?? "" : "";
+  form.distanceKm = item?.kind === "exercise" ? item.distanceKm ?? "" : "";
+  form.calories = item?.kind === "exercise" ? item.calories ?? "" : "";
+  form.photo = item?.photo ?? "";
   form.recordedAt = item?.recordedAt ?? selectedDate.value;
   form.note = item?.note ?? "";
   editorPopup.value = true;
 }
 
-function saveItem() {
+function resetPhotoAttempt() {
+  photoAttempt += 1;
+  photoRecognition?.abort();
+  photoRecognition = undefined;
+  photoBusy.value = false;
+  photoStatus.value = "";
+}
+
+function takePhoto(kind?: RecordKind) {
+  cameraKind = kind;
+  cameraInput.value?.click();
+}
+
+function removePhoto() {
+  resetPhotoAttempt();
+  form.photo = "";
+}
+
+function previewPhoto(photo: string) {
+  showImagePreview({ images: [photo], showIndex: false, closeable: true, teleport: "body" });
+}
+
+async function onPhotoSelected(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file || saving.value) return;
+  if (input === cameraInput.value && cameraKind) openEditor(cameraKind);
+  if (!editorPopup.value) return;
+
+  const attempt = ++photoAttempt;
+  const kind = form.kind;
+  const original = { amount: form.amount, distanceKm: form.distanceKm, calories: form.calories };
+  photoBusy.value = true;
+  photoStatus.value = "正在读取照片…";
+  try {
+    const photo = await prepareRecordPhoto(file);
+    if (attempt !== photoAttempt) return;
+    form.photo = photo;
+    if (kind === "food") {
+      photoStatus.value = "";
+      return;
+    }
+    photoStatus.value = "正在识别照片…";
+    photoRecognition = new AbortController();
+    try {
+      const result = await recognizeRecordPhoto(photo, kind, photoRecognition.signal);
+      if (attempt !== photoAttempt) return;
+      let filled = false;
+      for (const field of ["amount", "distanceKm", "calories"] as const) {
+        const value = result[field];
+        if (value !== undefined && form[field] === original[field]) {
+          form[field] = value;
+          filled = true;
+        }
+      }
+      photoStatus.value = filled ? "已填入识别结果，保存前请核对。" : "未自动填入数据，可以手动填写。";
+    } catch {
+      if (attempt === photoAttempt) photoStatus.value = "识别失败，照片已保留，可以手动填写。";
+    }
+  } catch {
+    if (attempt === photoAttempt) photoStatus.value = "无法读取这张照片，请重新拍照或选择图片。";
+  } finally {
+    if (attempt === photoAttempt) {
+      photoRecognition = undefined;
+      photoBusy.value = false;
+    }
+  }
+}
+
+async function saveItem() {
+  if (photoBusy.value || saving.value) return;
   const amount = Number(form.amount);
   const base = {
     id: editingItemId.value || (window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`),
     recordedAt: form.recordedAt,
     note: form.note,
     updatedAt: new Date().toISOString(),
+    photo: form.photo || undefined,
   };
   let item: SprintRecord;
   switch (form.kind) {
     case "food":
-      item = { ...base, kind: "food", name: form.name };
+      item = { ...base, kind: "food", name: form.name, meal: form.meal || undefined };
       break;
     case "weight":
       item = { ...base, kind: "weight", kilograms: amount };
       break;
     case "exercise":
-      item = { ...base, kind: "exercise", name: form.name, minutes: amount };
+      item = {
+        ...base,
+        kind: "exercise",
+        name: form.name,
+        minutes: form.amount === "" ? undefined : amount,
+        distanceKm: form.distanceKm === "" ? undefined : Number(form.distanceKm),
+        calories: form.calories === "" ? undefined : Number(form.calories),
+      };
       break;
   }
   if (!isSprintRecord(item)) {
@@ -474,7 +637,7 @@ function saveItem() {
     return;
   }
   const nextItems = [item, ...items.value.filter((record) => record.id !== item.id)];
-  if (!persist({ items: nextItems, deletedItems: deletedItems.value })) return;
+  if (!await persist({ items: nextItems, deletedItems: deletedItems.value })) return;
   selectedDate.value = item.recordedAt;
   editorPopup.value = false;
   showToast("已保存");
@@ -484,7 +647,7 @@ async function removeItem(id: string) {
   const target = items.value.find((item) => item.id === id);
   if (!target || !await confirmAction("移入回收站", `确认移除「${recordTitle(target)}」吗？`)) return;
   const deletedItem = { ...target, deletedAt: new Date().toISOString() };
-  if (!persist({
+  if (!await persist({
     items: items.value.filter((item) => item.id !== id),
     deletedItems: [deletedItem, ...deletedItems.value.filter((item) => item.id !== id)],
   })) return;
@@ -492,10 +655,10 @@ async function removeItem(id: string) {
   showToast("已移入回收站");
 }
 
-function openRecycleBin() {
+async function openRecycleBin() {
   const remainingItems = data.value.deletedItems.filter(isInRecycleWindow);
   if (data.value.deletedItems.length !== remainingItems.length) {
-    persist({ items: items.value, deletedItems: remainingItems });
+    await persist({ items: items.value, deletedItems: remainingItems });
   }
   settingsPopup.value = false;
   recyclePopup.value = true;
@@ -510,14 +673,14 @@ function getRecycleDaysLeft(item: DeletedSprintRecord) {
   return Math.max(1, Math.ceil((RECYCLE_KEEP_MS - elapsed) / DAY_MS));
 }
 
-function restoreDeletedItem(id: string) {
+async function restoreDeletedItem(id: string) {
   const item = deletedItems.value.find((record) => record.id === id);
   if (!item || !isInRecycleWindow(item)) {
     showToast("这条记录已超过恢复期限");
     return;
   }
   const { deletedAt: _deletedAt, ...restored } = item;
-  if (!persist({
+  if (!await persist({
     items: [{ ...restored, updatedAt: new Date().toISOString() }, ...items.value.filter((record) => record.id !== id)],
     deletedItems: deletedItems.value.filter((record) => record.id !== id),
   })) return;
@@ -528,7 +691,7 @@ function restoreDeletedItem(id: string) {
 
 async function purgeDeletedItem(id: string) {
   if (!await confirmAction("彻底删除", "确认彻底删除这条记录吗？")) return;
-  if (persist({ items: items.value, deletedItems: deletedItems.value.filter((item) => item.id !== id) })) {
+  if (await persist({ items: items.value, deletedItems: deletedItems.value.filter((item) => item.id !== id) })) {
     showToast("已彻底删除");
   }
 }
@@ -559,7 +722,7 @@ function onImportFileLoaded(payload: { dataStr: string; fileName: string }) {
   showToast("备份文件已读取");
 }
 
-function importData() {
+async function importData() {
   try {
     const backup: unknown = JSON.parse(importInfo.value.dataStr);
     if (!isSprintData(backup) || !("project" in backup) || backup.project !== PROJECT) {
@@ -582,7 +745,7 @@ function importData() {
         next.items.push(item);
       }
     }
-    if (!persist(next)) return;
+    if (!await persist(next)) return;
     importExportInfo.value.show = false;
     importInfo.value = { dataStr: "", fileName: "" };
     showToast("备份已合并");
@@ -597,7 +760,7 @@ function confirmAction(title: string, message: string) {
 
 async function resetAllData() {
   if (!await confirmAction("重置数据", "确认清除所有饮食、体重、运动和回收站记录吗？")) return;
-  if (!persist({ items: [], deletedItems: [] })) return;
+  if (!await persist({ items: [], deletedItems: [] })) return;
   settingsPopup.value = false;
   showToast("数据已重置");
 }
@@ -613,6 +776,7 @@ function updateScrollTopVisibility() {
 let analysisDateTimer: number | undefined;
 
 onMounted(() => {
+  void loadRecords();
   try {
     const storedTheme: unknown = themeStorage.getter();
     if (isThemeKey(storedTheme)) currentTheme.value = storedTheme;
@@ -627,6 +791,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  resetPhotoAttempt();
   window.removeEventListener("scroll", updateScrollTopVisibility);
   window.clearInterval(analysisDateTimer);
 });
@@ -646,7 +811,7 @@ onUnmounted(() => {
   box-sizing: border-box;
 }
 
-button, input, textarea {
+button, input, select, textarea {
   font: inherit;
 }
 
@@ -951,21 +1116,23 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .summary-card {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
+  gap: 6px;
   min-width: 0;
   padding: clamp(10px, 3vw, 16px);
   border: 0;
   border-radius: 16px;
   background: var(--surface);
   box-shadow: 0 6px 16px rgba(8, 60, 50, 0.12);
-  color: var(--text-main);
-  text-align: left;
-  transition: transform 0.15s ease;
 }
 
-.summary-card:active {
-  transform: scale(0.97);
+.summary-main {
+  display: grid;
+  width: 100%;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
 }
 
 .summary-top {
@@ -1028,11 +1195,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   width: 100%;
   height: 30px;
   margin-top: auto;
+  border: 0;
   border-radius: 999px;
   background: var(--header-icon-bg);
   color: var(--accent);
   font-size: 13px;
   font-weight: 700;
+}
+
+.camera-action {
+  background: transparent;
+  border: 1px solid var(--divider);
 }
 
 .log-panel, .analysis-panel {
@@ -1193,14 +1366,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   margin-top: 12px;
 }
 
+.record-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--divider);
+}
+
 .record-row {
   display: flex;
+  flex: 1;
+  min-width: 0;
   align-items: center;
   width: 100%;
   gap: 10px;
   padding: 12px 4px;
   border: 0;
-  border-top: 1px solid var(--divider);
   background: var(--surface);
   color: var(--text-main);
   text-align: left;
@@ -1239,8 +1420,27 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   color: var(--text-muted);
 }
 
+.record-thumbnail, .editor-photo {
+  display: block;
+  flex: none;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 10px;
+  background: var(--field-bg);
+}
+
+.record-thumbnail img {
+  display: block;
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+}
+
 .edit-popup {
   width: min(calc(100% - 24px), 460px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
 }
 
 .editor-form {
@@ -1260,7 +1460,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   font-weight: 600;
 }
 
-.editor-form input, .editor-form textarea {
+.editor-form input, .editor-form select, .editor-form textarea {
   width: 100%;
   min-height: 42px;
   padding: 9px 12px;
@@ -1274,6 +1474,49 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 
 .editor-form textarea {
   resize: vertical;
+}
+
+.photo-field {
+  display: grid;
+  gap: 8px;
+}
+
+.editor-photo img {
+  display: block;
+  width: 100%;
+  max-height: 150px;
+  object-fit: contain;
+}
+
+.photo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.photo-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  background: var(--field-bg);
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.photo-status {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 13px;
+}
+
+.exercise-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .editor-actions {
@@ -1296,7 +1539,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 }
 
 @media (hover: hover) {
-  .record-row:hover, .summary-card:hover {
+  .record-entry:hover, .record-row:hover, .summary-main:hover .summary-action, .camera-action:hover {
     background: var(--surface-soft);
   }
 }

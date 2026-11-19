@@ -76,10 +76,7 @@
             </button>
             <button class="record-row" type="button" @click="openEditor(item.kind, item)">
               <span class="summary-icon" :class="item.kind"><el-icon><component :is="icons[item.kind]" /></el-icon></span>
-              <span class="record-copy">
-                <strong>{{ recordTitle(item) }}</strong>
-                <span v-if="item.note">{{ item.note }}</span>
-              </span>
+              <strong class="record-copy">{{ recordTitle(item) }}</strong>
               <span class="record-kind" :class="item.kind">{{ item.kind === 'food' && item.meal ? mealLabels[item.meal] : labels[item.kind] }}</span>
               <el-icon class="record-arrow"><ArrowRight /></el-icon>
             </button>
@@ -144,10 +141,6 @@
             <el-icon><Close /></el-icon>
           </button>
         </div>
-        <label>
-          日期
-          <input v-model="form.recordedAt" type="date" required />
-        </label>
         <div class="photo-field">
           <button v-if="form.photo" class="editor-photo" type="button" aria-label="查看记录照片" @click="previewPhoto(form.photo)">
             <img :src="form.photo" alt="" />
@@ -188,10 +181,6 @@
             <input v-model.number="form.calories" type="number" inputmode="decimal" min="0.01" step="any" />
           </label>
         </div>
-        <label>
-          备注（选填）
-          <textarea v-model.trim="form.note" rows="2" />
-        </label>
         <div class="editor-actions">
           <button v-if="editingItemId" class="danger" type="button" :disabled="saving" @click="removeItem(editingItemId)">移入回收站</button>
           <button class="save-button" type="submit" :disabled="photoBusy || saving">保存</button>
@@ -293,6 +282,7 @@ const settingsPopup = ref(false);
 const recyclePopup = ref(false);
 const editorPopup = ref(false);
 const editingItemId = ref("");
+let editorRecordDate = "";
 const cameraInput = ref<HTMLInputElement>();
 const galleryInput = ref<HTMLInputElement>();
 const photoBusy = ref(false);
@@ -308,8 +298,6 @@ const form = reactive({
   distanceKm: "" as number | string,
   calories: "" as number | string,
   photo: "",
-  recordedAt: "",
-  note: "",
 });
 watch(editorPopup, (shown) => {
   if (!shown) resetPhotoAttempt();
@@ -528,8 +516,7 @@ function openEditor(kind: RecordKind, item?: SprintRecord) {
   form.distanceKm = item?.kind === "exercise" ? item.distanceKm ?? "" : "";
   form.calories = item?.kind === "exercise" ? item.calories ?? "" : "";
   form.photo = item?.photo ?? "";
-  form.recordedAt = item?.recordedAt ?? selectedDate.value;
-  form.note = item?.note ?? "";
+  editorRecordDate = item?.recordedAt ?? selectedDate.value;
   editorPopup.value = true;
 }
 
@@ -606,10 +593,11 @@ async function onPhotoSelected(event: Event) {
 async function saveItem() {
   if (photoBusy.value || saving.value) return;
   const amount = Number(form.amount);
+  const previous = items.value.find((record) => record.id === editingItemId.value);
   const base = {
     id: editingItemId.value || (window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`),
-    recordedAt: form.recordedAt,
-    note: form.note,
+    recordedAt: editorRecordDate,
+    note: previous?.note ?? "",
     updatedAt: new Date().toISOString(),
     photo: form.photo || undefined,
   };
@@ -811,7 +799,7 @@ onUnmounted(() => {
   box-sizing: border-box;
 }
 
-button, input, select, textarea {
+button, input, select {
   font: inherit;
 }
 
@@ -819,7 +807,7 @@ button {
   cursor: pointer;
 }
 
-button:focus-visible, input:focus-visible, textarea:focus-visible {
+button:focus-visible, input:focus-visible, select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -1388,17 +1376,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 }
 
 .record-copy {
-  display: grid;
   flex: 1;
-  gap: 4px;
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.record-copy > span {
-  color: var(--text-subtle);
-  font-size: 13px;
-  white-space: pre-wrap;
 }
 
 .record-kind, .record-arrow {
@@ -1460,7 +1440,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   font-weight: 600;
 }
 
-.editor-form input, .editor-form select, .editor-form textarea {
+.editor-form input, .editor-form select {
   width: 100%;
   min-height: 42px;
   padding: 9px 12px;
@@ -1470,10 +1450,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   color: var(--text-main);
   font-size: 16px;
   font-weight: 400;
-}
-
-.editor-form textarea {
-  resize: vertical;
 }
 
 .photo-field {

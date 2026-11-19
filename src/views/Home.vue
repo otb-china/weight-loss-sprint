@@ -20,7 +20,7 @@
       </header>
     </div>
 
-    <main class="sprint-view">
+    <main class="sprint-view" @touchstart.passive="startDaySwipe" @touchend="finishDaySwipe" @touchcancel="cancelDaySwipe">
       <section class="day-panel" aria-labelledby="day-heading">
         <div class="day-heading">
           <h2 id="day-heading">每日记录</h2>
@@ -32,7 +32,9 @@
           </button>
           <label class="date-picker">
             <el-icon><Calendar /></el-icon>
-            <span>{{ selectedDateLabel }}</span>
+            <Transition :name="dayTransition" mode="out-in">
+              <span :key="selectedDate">{{ selectedDateLabel }}</span>
+            </Transition>
             <input :value="selectedDate" type="date" aria-label="选择记录日期" @click="openDatePicker" @change="selectDate" />
           </label>
           <button type="button" aria-label="后一天" @click="changeDay(1)">
@@ -40,7 +42,8 @@
           </button>
         </div>
 
-        <div class="summary-grid">
+        <Transition :name="dayTransition" mode="out-in">
+        <div :key="selectedDate" class="summary-grid">
           <div
             v-for="card in summaryCards"
             :key="card.kind"
@@ -52,19 +55,15 @@
                 <span class="summary-label">{{ labels[card.kind] }}</span>
               </span>
               <strong :class="{ placeholder: card.value === '—' }">{{ card.value }}<small v-if="card.unit">{{ card.unit }}</small></strong>
+              <span class="summary-hint" :class="card.kind">点击记录<el-icon><ArrowRight /></el-icon></span>
             </button>
-            <div class="summary-actions" :class="card.kind">
-              <button class="summary-action" type="button" :disabled="!recordsReady"
-                :aria-label="'记录' + labels[card.kind]" @click="openEditor(card.kind)">
-                记录
-              </button>
-              <button class="summary-action camera-action" type="button" :disabled="!recordsReady"
-                :aria-label="'拍照记录' + labels[card.kind]" @click="takePhoto(card.kind)">
-                <el-icon><Camera /></el-icon>
-              </button>
-            </div>
+            <button class="camera-action" :class="card.kind" type="button" :disabled="!recordsReady"
+              :aria-label="'拍照记录' + labels[card.kind]" @click="takePhoto(card.kind)">
+              <el-icon><Camera /></el-icon>
+            </button>
           </div>
         </div>
+        </Transition>
         <input ref="cameraInput" type="file" accept="image/*" capture="environment" hidden @change="onPhotoSelected" />
         <input ref="galleryInput" type="file" accept="image/*" hidden @change="onPhotoSelected" />
       </section>
@@ -114,7 +113,8 @@
           <h2 id="log-heading">当天明细</h2>
           <span>{{ dayRecords.length }} 条</span>
         </div>
-        <div v-if="dayRecords.length || undoRecord" class="record-list">
+        <Transition :name="dayTransition" mode="out-in">
+        <div v-if="dayRecords.length || undoRecord" :key="selectedDate" class="record-list">
           <div v-if="undoRecord" class="record-swipe"
             @pointerdown="startRecordSwipe($event, undoRecord.id, 'restore')"
             @pointermove="moveRecordSwipe" @pointerup="finishRecordSwipe" @pointercancel="cancelRecordSwipe"
@@ -144,11 +144,12 @@
             </div>
           </div>
         </div>
-        <div v-else class="empty-state">
+        <div v-else :key="'empty-' + selectedDate" class="empty-state">
           <el-icon class="empty-icon"><Calendar /></el-icon>
           <strong>这一天还没有记录</strong>
           <span>点击上方卡片，记下饮食、体重或运动</span>
         </div>
+        </Transition>
       </section>
     </main>
 
@@ -325,6 +326,11 @@ let activeSwipe: {
   horizontal: boolean;
 } | undefined;
 let blockSwipeClick = false;
+const dayTransition = ref("day-next");
+let daySwipe: { x: number; y: number; time: number } | undefined;
+watch(selectedDate, (next, previous) => {
+  dayTransition.value = next < previous ? "day-prev" : "day-next";
+}, { flush: "sync" });
 const showScrollTop = ref(false);
 const settingsPopup = ref(false);
 const recyclePopup = ref(false);
@@ -463,6 +469,31 @@ function openDatePicker(event: MouseEvent) {
 function changeDay(offset: number) {
   const date = dayjs(selectedDate.value).add(offset, "day").format(DATE_FORMAT);
   if (isRecordDate(date)) selectedDate.value = date;
+}
+
+function startDaySwipe(event: TouchEvent) {
+  const target = event.target as HTMLElement;
+  if (event.touches.length !== 1 || target.closest(".record-swipe, input, textarea")) {
+    daySwipe = undefined;
+    return;
+  }
+  const touch = event.touches[0];
+  daySwipe = { x: touch.clientX, y: touch.clientY, time: Date.now() };
+}
+
+function finishDaySwipe(event: TouchEvent) {
+  const start = daySwipe;
+  daySwipe = undefined;
+  const touch = event.changedTouches[0];
+  if (!start || !touch) return;
+  const dx = touch.clientX - start.x;
+  const dy = touch.clientY - start.y;
+  if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5 || Date.now() - start.time > 800) return;
+  changeDay(dx < 0 ? 1 : -1);
+}
+
+function cancelDaySwipe() {
+  daySwipe = undefined;
 }
 
 function isPositiveNumber(value: unknown): value is number {
@@ -1339,55 +1370,87 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   font-weight: 500;
 }
 
-.summary-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: auto;
-  padding-top: 4px;
+.summary-card {
+  position: relative;
 }
 
-.summary-action {
+.summary-main {
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.summary-main:active {
+  transform: scale(0.97);
+}
+
+.summary-hint {
   display: inline-flex;
-  flex: 1;
   align-items: center;
-  justify-content: center;
-  gap: 3px;
-  min-width: 0;
-  height: 32px;
+  gap: 1px;
+  min-height: 30px;
+  padding-right: 34px;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.summary-hint .el-icon {
+  font-size: 11px;
+}
+
+.summary-hint.food { color: #b0662a; }
+.summary-hint.weight { color: #3a6ea8; }
+.summary-hint.exercise { color: #2f7d52; }
+
+.camera-action {
+  position: absolute;
+  right: clamp(10px, 3vw, 16px);
+  bottom: clamp(10px, 3vw, 16px);
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
   padding: 0;
   border: 0;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 700;
-  white-space: nowrap;
-  transition: filter 0.15s ease, transform 0.15s ease;
+  border-radius: 50%;
+  font-size: 15px;
+  transition: transform 0.15s ease;
 }
 
-.summary-action .el-icon {
-  font-size: 13px;
+.camera-action:active {
+  transform: scale(0.9);
 }
 
-.summary-action.camera-action {
-  flex: none;
-  width: 32px;
-  padding: 0;
-  background: transparent;
+.camera-action.food { background: #fff1df; color: #8c4e17; }
+.camera-action.weight { background: #e7f0ff; color: #26588e; }
+.camera-action.exercise { background: #e4f4e9; color: #256846; }
+
+.day-next-enter-active, .day-next-leave-active,
+.day-prev-enter-active, .day-prev-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
 }
 
-.summary-action.camera-action .el-icon {
-  font-size: 16px;
+.day-next-enter-from, .day-prev-leave-to {
+  opacity: 0;
+  transform: translateX(28px);
 }
 
-.summary-action:active {
-  transform: scale(0.95);
+.day-next-leave-to, .day-prev-enter-from {
+  opacity: 0;
+  transform: translateX(-28px);
 }
 
-.summary-actions.food .summary-action { background: #fff1df; color: #8c4e17; }
-.summary-actions.weight .summary-action { background: #e7f0ff; color: #26588e; }
-.summary-actions.exercise .summary-action { background: #e4f4e9; color: #256846; }
-.summary-actions.food .camera-action { box-shadow: inset 0 0 0 1px #f6d9b8; background: transparent; }
-.summary-actions.weight .camera-action { box-shadow: inset 0 0 0 1px #c9dbf5; background: transparent; }
-.summary-actions.exercise .camera-action { box-shadow: inset 0 0 0 1px #c3e3cf; background: transparent; }
+@media (prefers-reduced-motion: reduce) {
+  .day-next-enter-active, .day-next-leave-active,
+  .day-prev-enter-active, .day-prev-leave-active {
+    transition: opacity 0.12s ease;
+  }
+
+  .day-next-enter-from, .day-next-leave-to,
+  .day-prev-enter-from, .day-prev-leave-to {
+    transform: none;
+  }
+}
 
 .log-panel, .analysis-panel {
   margin-top: 14px;
@@ -1796,8 +1859,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 
 @media (hover: hover) {
-  .summary-action:hover {
-    filter: brightness(0.96);
+  .summary-main:hover .summary-hint {
+    opacity: 1;
   }
 
   .record-entry:hover, .record-row:hover {

@@ -50,12 +50,12 @@
             class="summary-card"
           >
             <button class="summary-main" type="button" :disabled="!recordsReady" @click="openEditor(card.kind)">
-              <span class="summary-top">
-                <span class="summary-icon" :class="card.kind"><el-icon><component :is="card.icon" /></el-icon></span>
-                <span class="summary-label">{{ labels[card.kind] }}</span>
-              </span>
+              <span class="summary-icon" :class="card.kind"><el-icon><component :is="card.icon" /></el-icon></span>
               <strong :class="{ placeholder: card.value === '—' }">{{ card.value }}<small v-if="card.unit">{{ card.unit }}</small></strong>
-              <span class="summary-hint" :class="card.kind">点击记录<el-icon><ArrowRight /></el-icon></span>
+              <span class="summary-foot">
+                <span class="summary-label">{{ labels[card.kind] }}</span>
+                <span class="summary-hint" :class="card.kind">记录<el-icon><ArrowRight /></el-icon></span>
+              </span>
             </button>
             <button class="camera-action" :class="card.kind" type="button" :disabled="!recordsReady"
               :aria-label="'拍照记录' + labels[card.kind]" @click="takePhoto(card.kind)">
@@ -1297,32 +1297,29 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 
 .summary-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  position: relative;
   min-width: 0;
-  padding: clamp(10px, 3vw, 16px);
-  border: 0;
-  border-radius: 16px;
+  border-radius: 18px;
   background: var(--surface);
-  box-shadow: 0 6px 16px rgba(8, 60, 50, 0.12);
+  box-shadow: 0 8px 20px rgba(8, 60, 50, 0.14);
 }
 
 .summary-main {
   display: grid;
+  gap: 10px;
   width: 100%;
-  gap: 12px;
-  padding: 0;
+  height: 100%;
+  padding: clamp(12px, 3.2vw, 16px);
   border: 0;
+  border-radius: inherit;
   background: transparent;
   text-align: left;
+  cursor: pointer;
+  transition: transform 0.15s ease;
 }
 
-.summary-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
+.summary-main:active {
+  transform: scale(0.97);
 }
 
 .summary-icon {
@@ -1339,21 +1336,16 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .summary-icon.weight { background: #e7f0ff; color: #26588e; }
 .summary-icon.exercise { background: #e4f4e9; color: #256846; }
 
-.summary-label {
-  color: var(--text-subtle);
-  font-size: 13px;
-  font-weight: 600;
-}
-
 .summary-card strong {
   display: flex;
   align-items: baseline;
   gap: 3px;
   max-width: 100%;
   min-height: 32px;
+  margin-top: 2px;
   color: var(--text-strong);
   overflow-wrap: anywhere;
-  font-size: clamp(22px, 5vw, 32px);
+  font-size: clamp(22px, 5.4vw, 30px);
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
 }
@@ -1370,25 +1362,25 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   font-weight: 500;
 }
 
-.summary-card {
-  position: relative;
+.summary-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--divider);
+  white-space: nowrap;
 }
 
-.summary-main {
-  cursor: pointer;
-  transition: transform 0.15s ease;
-}
-
-.summary-main:active {
-  transform: scale(0.97);
+.summary-label {
+  color: var(--text-subtle);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .summary-hint {
   display: inline-flex;
   align-items: center;
-  gap: 1px;
-  min-height: 30px;
-  padding-right: 34px;
   font-size: 12px;
   font-weight: 600;
   opacity: 0.85;
@@ -1404,26 +1396,28 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 .camera-action {
   position: absolute;
-  right: clamp(10px, 3vw, 16px);
-  bottom: clamp(10px, 3vw, 16px);
+  top: clamp(12px, 3.2vw, 16px);
+  right: clamp(12px, 3.2vw, 16px);
   display: inline-grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   padding: 0;
-  border: 0;
+  border: 1px solid var(--divider);
   border-radius: 50%;
-  font-size: 15px;
-  transition: transform 0.15s ease;
+  background: var(--surface);
+  color: var(--text-subtle);
+  font-size: 16px;
+  transition: transform 0.15s ease, color 0.15s ease;
 }
 
 .camera-action:active {
   transform: scale(0.9);
 }
 
-.camera-action.food { background: #fff1df; color: #8c4e17; }
-.camera-action.weight { background: #e7f0ff; color: #26588e; }
-.camera-action.exercise { background: #e4f4e9; color: #256846; }
+.camera-action.food { color: #8c4e17; }
+.camera-action.weight { color: #26588e; }
+.camera-action.exercise { color: #256846; }
 
 .day-next-enter-active, .day-next-leave-active,
 .day-prev-enter-active, .day-prev-leave-active {

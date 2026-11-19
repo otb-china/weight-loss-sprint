@@ -187,13 +187,10 @@
         <div v-if="form.kind === 'exercise'" class="meal-field" role="radiogroup" aria-labelledby="exercise-field-label">
           <span id="exercise-field-label" class="meal-field-label">运动项目（选填）</span>
           <div class="meal-options">
-            <button v-for="option in exerciseOptions" :key="option" type="button" role="radio"
-              :class="{ active: !showCustomExercise && form.name === option }" :aria-checked="!showCustomExercise && form.name === option"
+            <button v-for="option in visibleExerciseOptions" :key="option" type="button" role="radio"
+              :class="{ active: form.name === option }" :aria-checked="form.name === option"
               @click="selectExercise(option)">{{ option }}</button>
-            <button type="button" role="radio" :class="{ active: showCustomExercise }" :aria-checked="showCustomExercise"
-              @click="selectCustomExercise">其他</button>
           </div>
-          <input v-if="showCustomExercise" v-model.trim="form.name" aria-label="其他运动项目" placeholder="请输入运动项目" />
         </div>
         <div v-if="form.kind === 'weight'" class="meal-field">
           <label for="weight-input" class="meal-field-label">体重（公斤）</label>
@@ -353,9 +350,12 @@ const form = reactive({
   calories: "" as number | string,
   photo: "",
 });
-const exerciseOptions = ["徒步", "快走", "跑步", "游泳", "羽毛球", "椭圆机", "跳绳", "体操", "骑行", "力量训练", "瑜伽"];
-const customExercise = ref(false);
-const showCustomExercise = computed(() => customExercise.value || (form.name !== "" && !exerciseOptions.includes(form.name)));
+const exerciseOptions = ["徒步", "快走", "跑步", "游泳", "羽毛球", "椭圆机", "跳绳", "体操"];
+const editingExerciseName = ref("");
+const visibleExerciseOptions = computed(() =>
+  editingExerciseName.value && !exerciseOptions.includes(editingExerciseName.value)
+    ? [...exerciseOptions, editingExerciseName.value]
+    : exerciseOptions);
 const canSave = computed(() => {
   const filled = (value: number | string) => value !== "" && Number(value) > 0;
   switch (form.kind) {
@@ -603,7 +603,7 @@ function openEditor(kind: RecordKind, item?: SprintRecord) {
   editingItemId.value = item?.id ?? "";
   form.kind = kind;
   form.name = item && item.kind !== "weight" ? item.name : (!item && kind === "exercise" ? "椭圆机" : "");
-  customExercise.value = false;
+  editingExerciseName.value = item?.kind === "exercise" ? item.name : "";
   form.amount = item?.kind === "weight" ? item.kilograms
     : item?.kind === "exercise" ? item.minutes ?? ""
     : !item && kind === "weight" ? lastWeight(selectedDate.value) ?? ""
@@ -617,14 +617,7 @@ function openEditor(kind: RecordKind, item?: SprintRecord) {
 }
 
 function selectExercise(option: string) {
-  customExercise.value = false;
   form.name = form.name === option ? "" : option;
-}
-
-function selectCustomExercise() {
-  if (showCustomExercise.value) return;
-  customExercise.value = true;
-  form.name = "";
 }
 
 function lastWeight(date: string) {

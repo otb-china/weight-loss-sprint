@@ -56,7 +56,7 @@
             <div class="summary-actions" :class="card.kind">
               <button class="summary-action" type="button" :disabled="!recordsReady"
                 :aria-label="'记录' + labels[card.kind]" @click="openEditor(card.kind)">
-                <el-icon><Plus /></el-icon>
+                记录
               </button>
               <button class="summary-action camera-action" type="button" :disabled="!recordsReady"
                 :aria-label="'拍照记录' + labels[card.kind]" @click="takePhoto(card.kind)">
@@ -69,6 +69,46 @@
         <input ref="galleryInput" type="file" accept="image/*" hidden @change="onPhotoSelected" />
       </section>
 
+      <section class="analysis-panel" aria-labelledby="analysis-heading">
+        <div class="log-heading">
+          <h2 id="analysis-heading">记录分析</h2>
+          <span>截至今天</span>
+        </div>
+
+        <div class="analysis-section">
+          <h3><span class="summary-icon weight"><el-icon><Odometer /></el-icon></span>体重变化</h3>
+          <dl class="analysis-grid">
+            <div v-for="period in weightAnalysis" :key="period.label" class="analysis-stat" :class="changeTone(period.change)">
+              <dt>{{ period.label }}</dt>
+              <dd>
+                <template v-if="period.change === null">
+                  <span class="analysis-empty">记录不足</span>
+                </template>
+                <template v-else>
+                  <span class="analysis-value">
+                    <el-icon v-if="period.change !== 0"><component :is="period.change < 0 ? Bottom : Top" /></el-icon>
+                    {{ period.change === 0 ? "持平" : Math.abs(period.change) }}<small v-if="period.change !== 0">公斤</small>
+                  </span>
+                </template>
+              </dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="analysis-section">
+          <h3><span class="summary-icon exercise"><el-icon><Timer /></el-icon></span>运动天数</h3>
+          <dl class="analysis-grid exercise-analysis">
+            <div class="analysis-stat">
+              <dt>累计运动</dt>
+              <dd><span class="analysis-value">{{ exerciseAnalysis.total }}<small>天</small></span></dd>
+            </div>
+            <div class="analysis-stat" :class="{ streak: exerciseAnalysis.streak > 0 }">
+              <dt>连续运动</dt>
+              <dd><span class="analysis-value">{{ exerciseAnalysis.streak }}<small>天</small></span></dd>
+            </div>
+          </dl>
+        </div>
+      </section>
       <section class="log-panel" aria-labelledby="log-heading">
         <div class="log-heading">
           <h2 id="log-heading">当天明细</h2>
@@ -108,46 +148,6 @@
           <el-icon class="empty-icon"><Calendar /></el-icon>
           <strong>这一天还没有记录</strong>
           <span>点击上方卡片，记下饮食、体重或运动</span>
-        </div>
-      </section>
-      <section class="analysis-panel" aria-labelledby="analysis-heading">
-        <div class="log-heading">
-          <h2 id="analysis-heading">记录分析</h2>
-          <span>截至今天</span>
-        </div>
-
-        <div class="analysis-section">
-          <h3><span class="summary-icon weight"><el-icon><Odometer /></el-icon></span>体重变化</h3>
-          <dl class="analysis-grid">
-            <div v-for="period in weightAnalysis" :key="period.label" class="analysis-stat" :class="changeTone(period.change)">
-              <dt>{{ period.label }}</dt>
-              <dd>
-                <template v-if="period.change === null">
-                  <span class="analysis-empty">记录不足</span>
-                </template>
-                <template v-else>
-                  <span class="analysis-value">
-                    <el-icon v-if="period.change !== 0"><component :is="period.change < 0 ? Bottom : Top" /></el-icon>
-                    {{ period.change === 0 ? "持平" : Math.abs(period.change) }}<small v-if="period.change !== 0">公斤</small>
-                  </span>
-                </template>
-              </dd>
-            </div>
-          </dl>
-        </div>
-
-        <div class="analysis-section">
-          <h3><span class="summary-icon exercise"><el-icon><Timer /></el-icon></span>运动天数</h3>
-          <dl class="analysis-grid exercise-analysis">
-            <div class="analysis-stat">
-              <dt>累计运动</dt>
-              <dd><span class="analysis-value">{{ exerciseAnalysis.total }}<small>天</small></span></dd>
-            </div>
-            <div class="analysis-stat" :class="{ streak: exerciseAnalysis.streak > 0 }">
-              <dt>连续运动</dt>
-              <dd><span class="analysis-value">{{ exerciseAnalysis.streak }}<small>天</small></span></dd>
-            </div>
-          </dl>
         </div>
       </section>
     </main>
@@ -1340,47 +1340,65 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 
 .summary-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
   gap: 6px;
   margin-top: auto;
+  padding-top: 4px;
 }
 
 .summary-action {
   display: inline-flex;
+  flex: 1;
   align-items: center;
   justify-content: center;
-  width: 100%;
-  height: 34px;
+  gap: 3px;
+  min-width: 0;
+  height: 32px;
+  padding: 0;
   border: 0;
-  border-radius: 10px;
-  font-size: 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
   transition: filter 0.15s ease, transform 0.15s ease;
+}
+
+.summary-action .el-icon {
+  font-size: 13px;
+}
+
+.summary-action.camera-action {
+  flex: none;
+  width: 32px;
+  padding: 0;
+  background: transparent;
+}
+
+.summary-action.camera-action .el-icon {
+  font-size: 16px;
 }
 
 .summary-action:active {
   transform: scale(0.95);
 }
 
-.summary-actions.food .summary-action { background: #f0a25a; color: #fff; }
-.summary-actions.weight .summary-action { background: #4f86c6; color: #fff; }
-.summary-actions.exercise .summary-action { background: #3f9a68; color: #fff; }
-.summary-actions.food .camera-action { background: #fff1df; color: #8c4e17; }
-.summary-actions.weight .camera-action { background: #e7f0ff; color: #26588e; }
-.summary-actions.exercise .camera-action { background: #e4f4e9; color: #256846; }
+.summary-actions.food .summary-action { background: #fff1df; color: #8c4e17; }
+.summary-actions.weight .summary-action { background: #e7f0ff; color: #26588e; }
+.summary-actions.exercise .summary-action { background: #e4f4e9; color: #256846; }
+.summary-actions.food .camera-action { box-shadow: inset 0 0 0 1px #f6d9b8; background: transparent; }
+.summary-actions.weight .camera-action { box-shadow: inset 0 0 0 1px #c9dbf5; background: transparent; }
+.summary-actions.exercise .camera-action { box-shadow: inset 0 0 0 1px #c3e3cf; background: transparent; }
 
 .log-panel, .analysis-panel {
-  margin-top: 18px;
-  padding: clamp(16px, 4vw, 24px);
+  margin-top: 14px;
+  padding: clamp(16px, 4vw, 22px);
   border-radius: 20px;
   background: var(--surface);
   box-shadow: var(--header-shadow);
 }
 
 .analysis-section {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--divider);
+  margin-top: 14px;
 }
 
 .analysis-panel h3 {

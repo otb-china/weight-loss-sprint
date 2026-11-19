@@ -20,7 +20,8 @@
       </header>
     </div>
 
-    <main class="sprint-view" @touchstart.passive="startDaySwipe" @touchend="finishDaySwipe" @touchcancel="cancelDaySwipe">
+    <main class="sprint-view" :class="{ dragging: pageDragging }" :style="pageStyle"
+      @touchstart.passive="startDaySwipe" @touchmove="moveDaySwipe" @touchend="finishDaySwipe" @touchcancel="cancelDaySwipe">
       <section class="day-panel" aria-labelledby="day-heading">
         <div class="day-heading">
           <h2 id="day-heading">每日记录</h2>
@@ -32,9 +33,7 @@
           </button>
           <label class="date-picker">
             <el-icon><Calendar /></el-icon>
-            <Transition :name="dayTransition" mode="out-in">
-              <span :key="selectedDate">{{ selectedDateLabel }}</span>
-            </Transition>
+            <span>{{ selectedDateLabel }}</span>
             <input :value="selectedDate" type="date" aria-label="选择记录日期" @click="openDatePicker" @change="selectDate" />
           </label>
           <button type="button" aria-label="后一天" @click="changeDay(1)">
@@ -42,8 +41,7 @@
           </button>
         </div>
 
-        <Transition :name="dayTransition" mode="out-in">
-        <div :key="selectedDate" class="summary-grid">
+        <div class="summary-grid">
           <div
             v-for="card in summaryCards"
             :key="card.kind"
@@ -63,7 +61,6 @@
             </button>
           </div>
         </div>
-        </Transition>
         <input ref="cameraInput" type="file" accept="image/*" capture="environment" hidden @change="onPhotoSelected" />
         <input ref="galleryInput" type="file" accept="image/*" hidden @change="onPhotoSelected" />
       </section>
@@ -71,7 +68,7 @@
       <section class="analysis-panel" aria-labelledby="analysis-heading">
         <div class="log-heading">
           <h2 id="analysis-heading">记录分析</h2>
-          <span>截至今天</span>
+          <span>{{ analysisDateLabel }}</span>
         </div>
 
         <div class="analysis-section">
@@ -113,8 +110,7 @@
           <h2 id="log-heading">当天明细</h2>
           <span>{{ dayRecords.length }} 条</span>
         </div>
-        <Transition :name="dayTransition" mode="out-in">
-        <div v-if="dayRecords.length || undoRecord" :key="selectedDate" class="record-list">
+        <div v-if="dayRecords.length || undoRecord" class="record-list">
           <div v-if="undoRecord" class="record-swipe"
             @pointerdown="startRecordSwipe($event, undoRecord.id, 'restore')"
             @pointermove="moveRecordSwipe" @pointerup="finishRecordSwipe" @pointercancel="cancelRecordSwipe"
@@ -144,12 +140,11 @@
             </div>
           </div>
         </div>
-        <div v-else :key="'empty-' + selectedDate" class="empty-state">
+        <div v-else class="empty-state">
           <el-icon class="empty-icon"><Calendar /></el-icon>
           <strong>这一天还没有记录</strong>
           <span>点击上方卡片，记下饮食、体重或运动</span>
         </div>
-        </Transition>
       </section>
     </main>
 
@@ -168,6 +163,8 @@
           <div class="photo-actions">
             <button type="button" :disabled="photoBusy || saving" @click="takePhoto()"><el-icon><Camera /></el-icon>拍照</button>
             <button type="button" :disabled="photoBusy || saving" @click="galleryInput?.click()">从相册选图</button>
+            <button v-if="form.photo && form.kind !== 'food'" type="button" :disabled="photoBusy || saving"
+              @click="runPhotoRecognition()">重新识别</button>
             <button v-if="form.photo" type="button" :disabled="saving" @click="removePhoto">移除照片</button>
           </div>
           <p v-if="photoStatus" class="photo-status" role="status">{{ photoStatus }}</p>
@@ -184,6 +181,10 @@
           {{ form.photo ? "吃了什么（选填）" : "吃了什么" }}
           <input v-model.trim="form.name" placeholder="例如：一碗燕麦粥、一个鸡蛋" />
         </label>
+        <div v-if="form.kind === 'food' && frequentFoods.length" class="food-suggestions" role="group" aria-label="常吃的食物">
+          <button v-for="name in frequentFoods" :key="name" type="button" :disabled="saving"
+            @click="form.name = name">{{ name }}</button>
+        </div>
         <div v-if="form.kind === 'exercise'" class="meal-field" role="radiogroup" aria-labelledby="exercise-field-label">
           <span id="exercise-field-label" class="meal-field-label">运动项目（选填）</span>
           <div class="meal-options">
@@ -213,7 +214,7 @@
         </div>
         <div class="editor-actions">
           <button v-if="editingItemId" class="danger" type="button" :disabled="saving" @click="removeItem(editingItemId)">移入回收站</button>
-          <button class="save-button" type="submit" :disabled="photoBusy || saving || !canSave">保存</button>
+          <button class="save-button" type="submit" :disabled="photoReading || saving || !canSave">保存</button>
         </div>
       </form>
     </van-popup>
@@ -273,7 +274,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from "vue";
 import dayjs from "dayjs";
 import { showConfirmDialog, showImagePreview, showToast } from "vant";
 import { ArrowLeft, ArrowRight, Bottom, Calendar, Camera, Close, Food, Minus, Odometer, Plus, Setting, Timer, Top } from "@element-plus/icons-vue";
@@ -296,8 +297,8 @@ const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 const dataStorage = LStorage.new(`${PROJECT}:records`);
 const themeStorage = LStorage.new(`${PROJECT}:theme`);
-let storedSnapshot: string | undefined;
-const data = ref<SprintData>({ items: [], deletedItems: [] });
+let storedRevision: number | undefined;
+const data = shallowRef<SprintData>({ items: [], deletedItems: [] });
 const recordsReady = ref(false);
 const saving = ref(false);
 const items = computed(() => data.value.items);
@@ -305,8 +306,8 @@ const deletedItems = computed(() => data.value.deletedItems.filter(isInRecycleWi
 const currentTheme = ref<ThemeKey>(DEFAULT_THEME);
 const currentThemeOption = computed(() => themeOptions.find((theme) => theme.key === currentTheme.value) ?? themeOptions[0]);
 const themeStyle = computed(() => currentThemeOption.value.variables);
-const analysisDate = ref(today());
-const selectedDate = ref(analysisDate.value);
+const todayDate = ref(today());
+const selectedDate = ref(todayDate.value);
 const lastSwipeDeletedId = ref("");
 const undoRecord = computed(() => deletedItems.value.find((item) =>
   item.id === lastSwipeDeletedId.value && item.recordedAt === selectedDate.value));
@@ -323,10 +324,16 @@ let activeSwipe: {
   horizontal: boolean;
 } | undefined;
 let blockSwipeClick = false;
-const dayTransition = ref("day-next");
-let daySwipe: { x: number; y: number; time: number } | undefined;
+const pageOffset = ref(0);
+const pageDragging = ref(false);
+const pageStyle = computed(() => pageOffset.value ? {
+  transform: `translate3d(${pageOffset.value}px, 0, 0)`,
+  opacity: String(Math.max(0.3, 1 - Math.abs(pageOffset.value) / pageWidth())),
+} : undefined);
+let daySwipe: { x: number; y: number; time: number; horizontal: boolean } | undefined;
+let pageSwitchTimer: number | undefined;
 watch(selectedDate, (next, previous) => {
-  dayTransition.value = next < previous ? "day-prev" : "day-next";
+  slideInDay(next > previous ? 1 : -1);
 }, { flush: "sync" });
 const showScrollTop = ref(false);
 const settingsPopup = ref(false);
@@ -336,7 +343,9 @@ const editingItemId = ref("");
 let editorRecordDate = "";
 const cameraInput = ref<HTMLInputElement>();
 const galleryInput = ref<HTMLInputElement>();
-const photoBusy = ref(false);
+const photoReading = ref(false);
+const photoRecognizing = ref(false);
+const photoBusy = computed(() => photoReading.value || photoRecognizing.value);
 const photoStatus = ref("");
 let cameraKind: RecordKind | undefined;
 let photoAttempt = 0;
@@ -349,6 +358,23 @@ const form = reactive({
   distanceKm: "" as number | string,
   calories: "" as number | string,
   photo: "",
+});
+const frequentFoods = computed(() => {
+  if (form.kind !== "food" || !form.meal) return [];
+  const recent = items.value
+    .filter((item): item is Extract<SprintRecord, { kind: "food" }> =>
+      item.kind === "food" && item.meal === form.meal && Boolean(item.name.trim()))
+    .sort((a, b) => b.recordedAt.localeCompare(a.recordedAt) || Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    .slice(0, 30);
+  const foods = new Map<string, { name: string; count: number }>();
+  for (const item of recent) {
+    const name = item.name.trim();
+    const key = name.replace(/\s+/g, " ").toLowerCase();
+    const food = foods.get(key);
+    if (food) food.count += 1;
+    else foods.set(key, { name, count: 1 });
+  }
+  return [...foods.values()].sort((a, b) => b.count - a.count).slice(0, 3).map((food) => food.name);
 });
 const exerciseOptions = ["徒步", "快走", "跑步", "游泳", "羽毛球", "椭圆机", "跳绳", "体操"];
 const editingExerciseName = ref("");
@@ -382,11 +408,14 @@ const dayRecords = computed(() =>
   items.value.filter((item) => item.recordedAt === selectedDate.value)
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)),
 );
-const isToday = computed(() => selectedDate.value === analysisDate.value);
+const isToday = computed(() => selectedDate.value === todayDate.value);
+const analysisDateLabel = computed(() =>
+  isToday.value ? "截至今天" : `截至${dayjs(selectedDate.value).format("M月D日")}`,
+);
 const selectedDateLabel = computed(() => {
   const date = dayjs(selectedDate.value);
   const weekday = "日一二三四五六"[date.day()];
-  const offset = date.diff(dayjs(analysisDate.value), "day");
+  const offset = date.diff(dayjs(todayDate.value), "day");
   const relative = offset === 0 ? " · 今天" : offset === -1 ? " · 昨天" : offset === 1 ? " · 明天" : "";
   return `${date.format("M月D日")} 周${weekday}${relative}`;
 });
@@ -402,12 +431,13 @@ const summaryCards = computed(() => {
 });
 
 const weightAnalysis = computed(() => {
+  const cutoff = selectedDate.value;
   const weights = items.value
     .filter((item) => item.kind === "weight")
-    .filter((item) => item.recordedAt <= analysisDate.value)
+    .filter((item) => item.recordedAt <= cutoff)
     .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt) || Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
   const latest = weights[weights.length - 1];
-  const end = dayjs(analysisDate.value);
+  const end = dayjs(cutoff);
   const periods = [
     { label: "近一周", start: end.subtract(6, "day").format(DATE_FORMAT) },
     { label: "近一月", start: end.subtract(29, "day").format(DATE_FORMAT) },
@@ -422,7 +452,7 @@ const weightAnalysis = computed(() => {
 });
 
 const exerciseAnalysis = computed(() => {
-  const date = analysisDate.value;
+  const date = selectedDate.value;
   const exerciseDays = new Set(items.value
     .filter((item) => item.kind === "exercise" && item.recordedAt <= date)
     .map((item) => item.recordedAt));
@@ -471,6 +501,20 @@ function changeDay(offset: number) {
   if (isRecordDate(date)) selectedDate.value = date;
 }
 
+function pageWidth() {
+  return Math.max(320, window.innerWidth || 375);
+}
+
+function slideInDay(direction: number) {
+  window.clearTimeout(pageSwitchTimer);
+  pageDragging.value = true;
+  pageOffset.value = direction * pageWidth() * 0.35;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    pageDragging.value = false;
+    pageOffset.value = 0;
+  }));
+}
+
 function startDaySwipe(event: TouchEvent) {
   const target = event.target as HTMLElement;
   if (event.touches.length !== 1 || target.closest(".record-swipe, input, textarea")) {
@@ -478,21 +522,55 @@ function startDaySwipe(event: TouchEvent) {
     return;
   }
   const touch = event.touches[0];
-  daySwipe = { x: touch.clientX, y: touch.clientY, time: Date.now() };
+  daySwipe = { x: touch.clientX, y: touch.clientY, time: Date.now(), horizontal: false };
+}
+
+function moveDaySwipe(event: TouchEvent) {
+  const swipe = daySwipe;
+  const touch = event.touches[0];
+  if (!swipe || !touch) return;
+  const dx = touch.clientX - swipe.x;
+  const dy = touch.clientY - swipe.y;
+  if (!swipe.horizontal) {
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return;
+    if (Math.abs(dx) < Math.abs(dy) * 1.2) {
+      daySwipe = undefined;
+      return;
+    }
+    swipe.horizontal = true;
+    window.clearTimeout(pageSwitchTimer);
+  }
+  if (event.cancelable) event.preventDefault();
+  pageDragging.value = true;
+  pageOffset.value = dx;
 }
 
 function finishDaySwipe(event: TouchEvent) {
-  const start = daySwipe;
+  const swipe = daySwipe;
   daySwipe = undefined;
   const touch = event.changedTouches[0];
-  if (!start || !touch) return;
-  const dx = touch.clientX - start.x;
-  const dy = touch.clientY - start.y;
-  if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5 || Date.now() - start.time > 800) return;
-  changeDay(dx < 0 ? 1 : -1);
+  if (!swipe?.horizontal || !touch) return;
+  const dx = touch.clientX - swipe.x;
+  const width = pageWidth();
+  const quickFlick = Math.abs(dx) > 50 && Date.now() - swipe.time < 300;
+  pageDragging.value = false;
+  if (Math.abs(dx) < width * 0.25 && !quickFlick) {
+    pageOffset.value = 0;
+    return;
+  }
+  pageOffset.value = Math.sign(dx) * width;
+  pageSwitchTimer = window.setTimeout(() => {
+    const previous = selectedDate.value;
+    changeDay(dx < 0 ? 1 : -1);
+    if (selectedDate.value === previous) pageOffset.value = 0;
+  }, 180);
 }
 
 function cancelDaySwipe() {
+  if (daySwipe?.horizontal) {
+    pageDragging.value = false;
+    pageOffset.value = 0;
+  }
   daySwipe = undefined;
 }
 
@@ -544,12 +622,35 @@ function isSprintData(value: unknown): value is SprintData {
 
 async function loadRecords() {
   try {
-    storedSnapshot = await readStoredRecords();
-    const stored: unknown = storedSnapshot === undefined ? dataStorage.getter() : JSON.parse(storedSnapshot);
-    if (stored !== undefined) {
-      if (!isSprintData(stored)) throw new Error("Invalid records");
-      data.value = stored;
+    let stored = await readStoredRecords();
+    if (stored.revision === undefined) {
+      const legacy: unknown = stored.snapshot === undefined ? dataStorage.getter() : JSON.parse(stored.snapshot);
+      const initial = legacy === undefined ? { items: [], deletedItems: [] } : legacy;
+      if (!isSprintData(initial)) throw new Error("Invalid records");
+
+      const revision = await writeStoredRecords(undefined, [...initial.items, ...initial.deletedItems]);
+      if (revision !== undefined) {
+        storedRevision = revision;
+        data.value = initial;
+        recordsReady.value = true;
+        return;
+      }
+      // Another tab completed migration while this tab was reading the legacy data.
+      stored = await readStoredRecords();
     }
+    if (stored.revision === undefined) throw new Error("Records migration incomplete");
+
+    const loaded: SprintData = { items: [], deletedItems: [] };
+    for (const item of stored.records) {
+      if ("deletedAt" in item) loaded.deletedItems.push(item);
+      else loaded.items.push(item);
+    }
+    if (!isSprintData(loaded)) throw new Error("Invalid records");
+    loaded.items.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    loaded.deletedItems.sort((a, b) => Date.parse(b.deletedAt) - Date.parse(a.deletedAt));
+
+    storedRevision = stored.revision;
+    data.value = loaded;
     recordsReady.value = true;
   } catch {
     showToast("读取本地记录失败");
@@ -557,15 +658,22 @@ async function loadRecords() {
 }
 
 async function persist(next: SprintData) {
-  if (!recordsReady.value || saving.value) return false;
+  if (!recordsReady.value || storedRevision === undefined || saving.value) return false;
   saving.value = true;
   try {
-    const snapshot = JSON.stringify(next);
-    if (!await writeStoredRecords(snapshot, storedSnapshot)) {
+    const previous = new Map([...items.value, ...data.value.deletedItems].map((item) => [item.id, item]));
+    const changed: SprintRecord[] = [];
+    for (const item of [...next.items, ...next.deletedItems]) {
+      if (previous.get(item.id) !== item) changed.push(item);
+      previous.delete(item.id);
+    }
+    const removedIds = [...previous.keys()];
+    const revision = await writeStoredRecords(storedRevision, changed, removedIds);
+    if (revision === undefined) {
       showToast("其他页面已更新记录，请刷新后重试");
       return false;
     }
-    storedSnapshot = snapshot;
+    storedRevision = revision;
     data.value = next;
     return true;
   } catch {
@@ -646,7 +754,8 @@ function resetPhotoAttempt() {
   photoAttempt += 1;
   photoRecognition?.abort();
   photoRecognition = undefined;
-  photoBusy.value = false;
+  photoReading.value = false;
+  photoRecognizing.value = false;
   photoStatus.value = "";
 }
 
@@ -673,47 +782,61 @@ async function onPhotoSelected(event: Event) {
   if (!editorPopup.value) return;
 
   const attempt = ++photoAttempt;
-  const kind = form.kind;
-  const original = { amount: form.amount, distanceKm: form.distanceKm, calories: form.calories };
-  photoBusy.value = true;
+  const original = currentPhotoMetrics();
+  photoReading.value = true;
   photoStatus.value = "正在读取照片…";
   try {
     const photo = await prepareRecordPhoto(file);
     if (attempt !== photoAttempt) return;
     form.photo = photo;
-    if (kind === "food") {
-      photoStatus.value = "";
-      return;
-    }
-    photoStatus.value = "正在识别照片…";
-    photoRecognition = new AbortController();
-    try {
-      const result = await recognizeRecordPhoto(photo, kind, photoRecognition.signal);
-      if (attempt !== photoAttempt) return;
-      let filled = false;
-      for (const field of ["amount", "distanceKm", "calories"] as const) {
-        const value = result[field];
-        if (value !== undefined && form[field] === original[field]) {
-          form[field] = value;
-          filled = true;
-        }
-      }
-      photoStatus.value = filled ? "已填入识别结果，保存前请核对。" : "未自动填入数据，可以手动填写。";
-    } catch {
-      if (attempt === photoAttempt) photoStatus.value = "识别失败，照片已保留，可以手动填写。";
-    }
+    photoStatus.value = "";
   } catch {
     if (attempt === photoAttempt) photoStatus.value = "无法读取这张照片，请重新拍照或选择图片。";
+    return;
+  } finally {
+    if (attempt === photoAttempt) photoReading.value = false;
+  }
+  void runPhotoRecognition(original);
+}
+
+function currentPhotoMetrics() {
+  return { amount: form.amount, distanceKm: form.distanceKm, calories: form.calories };
+}
+
+async function runPhotoRecognition(original = currentPhotoMetrics()) {
+  const { photo, kind } = form;
+  if (!editorPopup.value || !photo || kind === "food" || photoBusy.value || saving.value) return;
+
+  const attempt = ++photoAttempt;
+  const controller = new AbortController();
+  photoRecognition = controller;
+  photoRecognizing.value = true;
+  photoStatus.value = "正在识别照片…";
+  try {
+    const result = await recognizeRecordPhoto(photo, kind, controller.signal);
+    if (attempt !== photoAttempt) return;
+    let filled = false;
+    for (const field of ["amount", "distanceKm", "calories"] as const) {
+      const value = result[field];
+      if (value !== undefined && form[field] === original[field]) {
+        form[field] = value;
+        filled = true;
+      }
+    }
+    photoStatus.value = filled ? "已填入识别结果，保存前请核对。" : "未自动填入数据，可重新识别或手动填写。";
+  } catch {
+    if (attempt === photoAttempt) photoStatus.value = "识别失败，可重新识别或手动填写。";
   } finally {
     if (attempt === photoAttempt) {
       photoRecognition = undefined;
-      photoBusy.value = false;
+      photoRecognizing.value = false;
     }
   }
 }
 
 async function saveItem() {
-  if (photoBusy.value || saving.value || !canSave.value) return;
+  if (photoReading.value || saving.value || !canSave.value) return;
+  if (photoRecognizing.value) resetPhotoAttempt();
   const amount = Number(form.amount);
   const previous = items.value.find((record) => record.id === editingItemId.value);
   const base = {
@@ -949,7 +1072,7 @@ function updateScrollTopVisibility() {
   showScrollTop.value = window.scrollY > 240;
 }
 
-let analysisDateTimer: number | undefined;
+let todayDateTimer: number | undefined;
 
 onMounted(() => {
   void loadRecords();
@@ -961,20 +1084,21 @@ onMounted(() => {
   }
   updateScrollTopVisibility();
   window.addEventListener("scroll", updateScrollTopVisibility, { passive: true });
-  analysisDateTimer = window.setInterval(() => {
-    analysisDate.value = today();
+  todayDateTimer = window.setInterval(() => {
+    todayDate.value = today();
   }, 60_000);
 });
 
 onUnmounted(() => {
   resetPhotoAttempt();
   window.removeEventListener("scroll", updateScrollTopVisibility);
-  window.clearInterval(analysisDateTimer);
+  window.clearInterval(todayDateTimer);
 });
 </script>
 
 <style lang="scss" scoped>
 .home-page {
+  overflow-x: clip;
   min-height: 100vh;
   min-height: 100dvh;
   padding: 0 12px;
@@ -1156,6 +1280,19 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   width: min(100%, 780px);
   margin: 0 auto;
   padding: 20px 4px calc(16px + env(safe-area-inset-bottom));
+  touch-action: pan-y pinch-zoom;
+  transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+  will-change: transform;
+}
+
+.sprint-view.dragging {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sprint-view {
+    transition: opacity 0.12s ease;
+  }
 }
 
 .day-panel {
@@ -1411,33 +1548,6 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .camera-action.food { color: #8c4e17; }
 .camera-action.weight { color: #26588e; }
 .camera-action.exercise { color: #256846; }
-
-.day-next-enter-active, .day-next-leave-active,
-.day-prev-enter-active, .day-prev-leave-active {
-  transition: opacity 0.16s ease, transform 0.16s ease;
-}
-
-.day-next-enter-from, .day-prev-leave-to {
-  opacity: 0;
-  transform: translateX(28px);
-}
-
-.day-next-leave-to, .day-prev-enter-from {
-  opacity: 0;
-  transform: translateX(-28px);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .day-next-enter-active, .day-next-leave-active,
-  .day-prev-enter-active, .day-prev-leave-active {
-    transition: opacity 0.12s ease;
-  }
-
-  .day-next-enter-from, .day-next-leave-to,
-  .day-prev-enter-from, .day-prev-leave-to {
-    transform: none;
-  }
-}
 
 .log-panel, .analysis-panel {
   margin-top: 14px;
@@ -1784,6 +1894,26 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .photo-field {
   display: grid;
   gap: 8px;
+}
+
+.food-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.food-suggestions button {
+  max-width: 100%;
+  min-height: 36px;
+  padding: 5px 10px;
+  overflow: hidden;
+  border: 1px solid var(--divider);
+  border-radius: 999px;
+  background: var(--field-bg);
+  color: var(--accent);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editor-photo img {

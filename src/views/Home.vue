@@ -52,12 +52,17 @@
                 <span class="summary-label">{{ labels[card.kind] }}</span>
               </span>
               <strong :class="{ placeholder: card.value === '—' }">{{ card.value }}<small v-if="card.unit">{{ card.unit }}</small></strong>
-              <span class="summary-action"><el-icon><Plus /></el-icon>记录</span>
             </button>
-            <button class="summary-action camera-action" type="button" :disabled="!recordsReady"
-              :aria-label="'拍照记录' + labels[card.kind]" @click="takePhoto(card.kind)">
-              <el-icon><Camera /></el-icon>拍照
-            </button>
+            <div class="summary-actions" :class="card.kind">
+              <button class="summary-action" type="button" :disabled="!recordsReady"
+                :aria-label="'记录' + labels[card.kind]" @click="openEditor(card.kind)">
+                <el-icon><Plus /></el-icon>
+              </button>
+              <button class="summary-action camera-action" type="button" :disabled="!recordsReady"
+                :aria-label="'拍照记录' + labels[card.kind]" @click="takePhoto(card.kind)">
+                <el-icon><Camera /></el-icon>
+              </button>
+            </div>
           </div>
         </div>
         <input ref="cameraInput" type="file" accept="image/*" capture="environment" hidden @change="onPhotoSelected" />
@@ -69,17 +74,34 @@
           <h2 id="log-heading">当天明细</h2>
           <span>{{ dayRecords.length }} 条</span>
         </div>
-        <div v-if="dayRecords.length" class="record-list">
-          <div v-for="item in dayRecords" :key="item.id" class="record-entry">
-            <button v-if="item.photo" class="record-thumbnail" type="button" aria-label="查看记录照片" @click="previewPhoto(item.photo)">
-              <img :src="item.photo" alt="" loading="lazy" />
+        <div v-if="dayRecords.length || undoRecord" class="record-list">
+          <div v-if="undoRecord" class="record-swipe"
+            @pointerdown="startRecordSwipe($event, undoRecord.id, 'restore')"
+            @pointermove="moveRecordSwipe" @pointerup="finishRecordSwipe" @pointercancel="cancelRecordSwipe"
+            @click.capture="suppressSwipeClick">
+            <button class="swipe-undo" type="button" :disabled="saving" @click="restoreDeletedItem(undoRecord.id)">
+              已移入回收站 · 右滑或点击撤销
             </button>
-            <button class="record-row" type="button" @click="openEditor(item.kind, item)">
-              <span class="summary-icon" :class="item.kind"><el-icon><component :is="icons[item.kind]" /></el-icon></span>
-              <strong class="record-copy">{{ recordTitle(item) }}</strong>
-              <span class="record-kind" :class="item.kind">{{ item.kind === 'food' && item.meal ? mealLabels[item.meal] : labels[item.kind] }}</span>
-              <el-icon class="record-arrow"><ArrowRight /></el-icon>
-            </button>
+          </div>
+          <div v-for="item in dayRecords" :key="item.id" class="record-swipe"
+            @pointerdown="startRecordSwipe($event, item.id, 'delete')"
+            @pointermove="moveRecordSwipe" @pointerup="finishRecordSwipe" @pointercancel="cancelRecordSwipe"
+            @click.capture="suppressSwipeClick">
+            <span v-if="swipedRecordId === item.id && swipeOffset < 0" class="swipe-delete" aria-hidden="true">
+              {{ swipeReady ? "松手删除" : "左滑删除" }}
+            </span>
+            <div class="record-entry" :class="{ swiping: swipedRecordId === item.id }"
+              :style="swipedRecordId === item.id ? { transform: `translateX(${swipeOffset}px)` } : undefined">
+              <button v-if="item.photo" class="record-thumbnail" type="button" aria-label="查看记录照片" @click="previewPhoto(item.photo)">
+                <img :src="item.photo" alt="" loading="lazy" draggable="false" />
+              </button>
+              <button class="record-row" type="button" @click="openEditor(item.kind, item)">
+                <span class="summary-icon" :class="item.kind"><el-icon><component :is="icons[item.kind]" /></el-icon></span>
+                <strong class="record-copy">{{ recordTitle(item) }}</strong>
+                <span class="record-kind" :class="item.kind">{{ item.kind === 'food' && item.meal ? mealLabels[item.meal] : labels[item.kind] }}</span>
+                <el-icon class="record-arrow"><ArrowRight /></el-icon>
+              </button>
+            </div>
           </div>
         </div>
         <div v-else class="empty-state">
@@ -108,12 +130,10 @@
                     <el-icon v-if="period.change !== 0"><component :is="period.change < 0 ? Bottom : Top" /></el-icon>
                     {{ period.change === 0 ? "持平" : Math.abs(period.change) }}<small v-if="period.change !== 0">公斤</small>
                   </span>
-                  <small class="analysis-dates">{{ period.dates }}</small>
                 </template>
               </dd>
             </div>
           </dl>
-          <p class="analysis-note">近 7 天 / 近 30 天内，首条与最新体重对比</p>
         </div>
 
         <div class="analysis-section">
@@ -128,13 +148,12 @@
               <dd><span class="analysis-value">{{ exerciseAnalysis.streak }}<small>天</small></span></dd>
             </div>
           </dl>
-          <p class="analysis-note">同一天多次运动计 1 天；今天未运动时从昨天起算连续天数</p>
         </div>
       </section>
     </main>
 
     <van-popup v-model:show="editorPopup" class="edit-popup" :close-on-click-overlay="!saving" round destroy-on-close>
-      <form class="popup-body editor-form" @submit.prevent="saveItem">
+      <form class="popup-body editor-form" novalidate @submit.prevent="saveItem">
         <div class="popup-head">
           <h3>{{ editingItemId ? "编辑" : "记录" }}{{ labels[form.kind] }}</h3>
           <button class="header-icon" type="button" aria-label="关闭" :disabled="saving" @click="editorPopup = false">
@@ -152,28 +171,41 @@
           </div>
           <p v-if="photoStatus" class="photo-status" role="status">{{ photoStatus }}</p>
         </div>
+        <div v-if="form.kind === 'food'" class="meal-field" role="radiogroup" aria-labelledby="meal-field-label">
+          <span id="meal-field-label" class="meal-field-label">餐次</span>
+          <div class="meal-options">
+            <button v-for="(label, meal) in mealLabels" :key="meal" type="button" role="radio"
+              :class="{ active: form.meal === meal }" :aria-checked="form.meal === meal"
+              @click="form.meal = meal">{{ label }}</button>
+          </div>
+        </div>
         <label v-if="form.kind === 'food'">
-          餐次
-          <select v-model="form.meal">
-            <option value="">请选择</option>
-            <option v-for="(label, meal) in mealLabels" :key="meal" :value="meal">{{ label }}</option>
-          </select>
+          {{ form.photo ? "吃了什么（选填）" : "吃了什么" }}
+          <input v-model.trim="form.name" placeholder="例如：一碗燕麦粥、一个鸡蛋" />
         </label>
-        <label v-if="form.kind !== 'weight'">
-          {{ form.kind === "food" ? (form.photo ? "吃了什么（选填）" : "吃了什么") : "运动项目（选填）" }}
-          <input v-model.trim="form.name" :required="form.kind === 'food' && !form.photo"
-            :placeholder="form.kind === 'food' ? '例如：一碗燕麦粥、一个鸡蛋' : '例如：快走'" />
-        </label>
-        <label v-if="form.kind === 'weight'">
-          体重（公斤）
-          <input v-model.number="form.amount" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="例如：65.5" required />
-        </label>
-        <label v-if="form.kind === 'exercise'">
-          运动时长（分钟）
-          <input v-model.number="form.amount" type="number" inputmode="numeric" min="1" step="1" placeholder="例如：30"
-            :required="form.distanceKm === '' && form.calories === ''" />
-        </label>
+        <div v-if="form.kind === 'exercise'" class="meal-field" role="radiogroup" aria-labelledby="exercise-field-label">
+          <span id="exercise-field-label" class="meal-field-label">运动项目（选填）</span>
+          <div class="meal-options">
+            <button v-for="option in exerciseOptions" :key="option" type="button" role="radio"
+              :class="{ active: !showCustomExercise && form.name === option }" :aria-checked="!showCustomExercise && form.name === option"
+              @click="selectExercise(option)">{{ option }}</button>
+            <button type="button" role="radio" :class="{ active: showCustomExercise }" :aria-checked="showCustomExercise"
+              @click="selectCustomExercise">其他</button>
+          </div>
+          <input v-if="showCustomExercise" v-model.trim="form.name" aria-label="其他运动项目" placeholder="请输入运动项目" />
+        </div>
+        <div v-if="form.kind === 'weight'" class="meal-field">
+          <label for="weight-input" class="meal-field-label">体重（公斤）</label>
+          <div class="weight-stepper">
+            <button type="button" aria-label="减少 0.1 公斤" :disabled="saving" @click="stepWeight(-0.1)"><el-icon><Minus /></el-icon></button>
+            <input id="weight-input" v-model.number="form.amount" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="例如：65.5" />
+            <button type="button" aria-label="增加 0.1 公斤" :disabled="saving" @click="stepWeight(0.1)"><el-icon><Plus /></el-icon></button>
+          </div>
+        </div>
         <div v-if="form.kind === 'exercise'" class="exercise-fields">
+          <label>时长（分钟）
+            <input v-model.number="form.amount" type="number" inputmode="numeric" min="1" step="1" placeholder="30" />
+          </label>
           <label>距离（公里）
             <input v-model.number="form.distanceKm" type="number" inputmode="decimal" min="0.01" step="any" />
           </label>
@@ -183,7 +215,7 @@
         </div>
         <div class="editor-actions">
           <button v-if="editingItemId" class="danger" type="button" :disabled="saving" @click="removeItem(editingItemId)">移入回收站</button>
-          <button class="save-button" type="submit" :disabled="photoBusy || saving">保存</button>
+          <button class="save-button" type="submit" :disabled="photoBusy || saving || !canSave">保存</button>
         </div>
       </form>
     </van-popup>
@@ -246,7 +278,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import dayjs from "dayjs";
 import { showConfirmDialog, showImagePreview, showToast } from "vant";
-import { ArrowLeft, ArrowRight, Bottom, Calendar, Camera, Close, Food, Odometer, Plus, Setting, Timer, Top } from "@element-plus/icons-vue";
+import { ArrowLeft, ArrowRight, Bottom, Calendar, Camera, Close, Food, Minus, Odometer, Plus, Setting, Timer, Top } from "@element-plus/icons-vue";
 import ImportDataPopup from "@/components/ImportDataPopup.vue";
 import SettingsPopup from "@/components/SettingsPopup.vue";
 import { DEFAULT_THEME, isThemeKey, themeOptions, type ThemeKey } from "@/config/themes";
@@ -277,6 +309,22 @@ const currentThemeOption = computed(() => themeOptions.find((theme) => theme.key
 const themeStyle = computed(() => currentThemeOption.value.variables);
 const analysisDate = ref(today());
 const selectedDate = ref(analysisDate.value);
+const lastSwipeDeletedId = ref("");
+const undoRecord = computed(() => deletedItems.value.find((item) =>
+  item.id === lastSwipeDeletedId.value && item.recordedAt === selectedDate.value));
+const swipedRecordId = ref("");
+const swipeOffset = ref(0);
+const swipeReady = ref(false);
+let activeSwipe: {
+  id: string;
+  action: "delete" | "restore";
+  pointerId: number;
+  startX: number;
+  startY: number;
+  width: number;
+  horizontal: boolean;
+} | undefined;
+let blockSwipeClick = false;
 const showScrollTop = ref(false);
 const settingsPopup = ref(false);
 const recyclePopup = ref(false);
@@ -298,6 +346,25 @@ const form = reactive({
   distanceKm: "" as number | string,
   calories: "" as number | string,
   photo: "",
+});
+const exerciseOptions = ["徒步", "快走", "跑步", "游泳", "羽毛球", "椭圆机", "跳绳", "体操", "骑行", "力量训练", "瑜伽"];
+const customExercise = ref(false);
+const showCustomExercise = computed(() => customExercise.value || (form.name !== "" && !exerciseOptions.includes(form.name)));
+const canSave = computed(() => {
+  const filled = (value: number | string) => value !== "" && Number(value) > 0;
+  switch (form.kind) {
+    case "food":
+      return Boolean(form.meal) && Boolean(form.name.trim() || form.photo);
+    case "weight":
+      return filled(form.amount);
+    case "exercise":
+      return (form.amount === "" || (filled(form.amount) && Number.isSafeInteger(Number(form.amount)))) &&
+        (form.distanceKm === "" || filled(form.distanceKm)) &&
+        (form.calories === "" || filled(form.calories)) &&
+        (form.amount !== "" || form.distanceKm !== "" || form.calories !== "");
+    default:
+      return false;
+  }
 });
 watch(editorPopup, (shown) => {
   if (!shown) resetPhotoAttempt();
@@ -343,14 +410,8 @@ const weightAnalysis = computed(() => {
 
   return periods.map(({ label, start }) => {
     const first = start && weights.find((item) => item.recordedAt >= start);
-    if (!first || !latest || first === latest) return { label, change: null, dates: "" };
-    const change = Number((latest.kilograms - first.kilograms).toFixed(2));
-    const dateLabel = (date: string) => dayjs(date).format("M月D日");
-    return {
-      label,
-      change,
-      dates: `${dateLabel(first.recordedAt)} – ${dateLabel(latest.recordedAt)}`,
-    };
+    if (!first || !latest || first === latest) return { label, change: null };
+    return { label, change: Number((latest.kilograms - first.kilograms).toFixed(2)) };
   });
 });
 
@@ -510,14 +571,51 @@ function openEditor(kind: RecordKind, item?: SprintRecord) {
   resetPhotoAttempt();
   editingItemId.value = item?.id ?? "";
   form.kind = kind;
-  form.name = item && item.kind !== "weight" ? item.name : "";
-  form.amount = item?.kind === "weight" ? item.kilograms : (item?.kind === "exercise" ? item.minutes ?? "" : "");
-  form.meal = item?.kind === "food" ? item.meal ?? "" : "";
+  form.name = item && item.kind !== "weight" ? item.name : (!item && kind === "exercise" ? "椭圆机" : "");
+  customExercise.value = false;
+  form.amount = item?.kind === "weight" ? item.kilograms
+    : item?.kind === "exercise" ? item.minutes ?? ""
+    : !item && kind === "weight" ? lastWeight(selectedDate.value) ?? ""
+    : "";
+  form.meal = item?.kind === "food" ? item.meal ?? mealByTime() : (item ? "" : mealByTime());
   form.distanceKm = item?.kind === "exercise" ? item.distanceKm ?? "" : "";
   form.calories = item?.kind === "exercise" ? item.calories ?? "" : "";
   form.photo = item?.photo ?? "";
   editorRecordDate = item?.recordedAt ?? selectedDate.value;
   editorPopup.value = true;
+}
+
+function selectExercise(option: string) {
+  customExercise.value = false;
+  form.name = form.name === option ? "" : option;
+}
+
+function selectCustomExercise() {
+  if (showCustomExercise.value) return;
+  customExercise.value = true;
+  form.name = "";
+}
+
+function lastWeight(date: string) {
+  const weights = items.value
+    .filter((record) => record.kind === "weight")
+    .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt) || Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
+  const before = weights.filter((record) => record.recordedAt <= date);
+  return (before[before.length - 1] ?? weights[weights.length - 1])?.kilograms;
+}
+
+function stepWeight(delta: number) {
+  const current = Number(form.amount);
+  const base = form.amount === "" || !Number.isFinite(current) ? lastWeight(selectedDate.value) ?? 60 : current;
+  form.amount = Math.max(0.1, Number((base + delta).toFixed(2)));
+}
+
+function mealByTime(): Meal {
+  const hour = dayjs().hour();
+  if (hour >= 5 && hour < 10) return "breakfast";
+  if (hour >= 10 && hour < 14) return "lunch";
+  if (hour >= 17 && hour < 21) return "dinner";
+  return "snack";
 }
 
 function resetPhotoAttempt() {
@@ -591,7 +689,7 @@ async function onPhotoSelected(event: Event) {
 }
 
 async function saveItem() {
-  if (photoBusy.value || saving.value) return;
+  if (photoBusy.value || saving.value || !canSave.value) return;
   const amount = Number(form.amount);
   const previous = items.value.find((record) => record.id === editingItemId.value);
   const base = {
@@ -631,16 +729,81 @@ async function saveItem() {
   showToast("已保存");
 }
 
-async function removeItem(id: string) {
+function startRecordSwipe(event: PointerEvent, id: string, action: "delete" | "restore") {
+  if (!event.isPrimary || event.button !== 0 || saving.value) return;
+  blockSwipeClick = false;
+  const row = event.currentTarget as HTMLElement;
+  activeSwipe = {
+    id, action, pointerId: event.pointerId,
+    startX: event.clientX, startY: event.clientY,
+    width: row.clientWidth, horizontal: false,
+  };
+}
+
+function moveRecordSwipe(event: PointerEvent) {
+  const swipe = activeSwipe;
+  if (!swipe || swipe.pointerId !== event.pointerId) return;
+  const dx = event.clientX - swipe.startX;
+  const dy = event.clientY - swipe.startY;
+  if (!swipe.horizontal) {
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
+    if (Math.abs(dy) >= Math.abs(dx)) {
+      cancelRecordSwipe(event);
+      return;
+    }
+    swipe.horizontal = true;
+    blockSwipeClick = true;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+  if (swipe.action === "delete") {
+    swipedRecordId.value = swipe.id;
+    swipeOffset.value = Math.max(-swipe.width, Math.min(0, dx));
+    swipeReady.value = dx <= -swipe.width / 2;
+  }
+}
+
+function finishRecordSwipe(event: PointerEvent) {
+  const swipe = activeSwipe;
+  if (!swipe || swipe.pointerId !== event.pointerId) return;
+  const dx = event.clientX - swipe.startX;
+  cancelRecordSwipe(event);
+  if (!swipe.horizontal || saving.value) return;
+  if (swipe.action === "delete" && dx <= -swipe.width / 2) void removeItem(swipe.id, true);
+  if (swipe.action === "restore" && dx >= 32) void restoreDeletedItem(swipe.id);
+}
+
+function cancelRecordSwipe(event: PointerEvent) {
+  if (activeSwipe?.pointerId !== event.pointerId) return;
+  activeSwipe = undefined;
+  swipedRecordId.value = "";
+  swipeOffset.value = 0;
+  swipeReady.value = false;
+}
+
+function suppressSwipeClick(event: MouseEvent) {
+  if (!blockSwipeClick || event.detail === 0) return;
+  blockSwipeClick = false;
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+async function removeItem(id: string, fromSwipe = false) {
+  if (saving.value) return;
+  const record = items.value.find((item) => item.id === id);
+  if (!record || (!fromSwipe && !await confirmAction("移入回收站", `确认移除「${recordTitle(record)}」吗？`))) return;
   const target = items.value.find((item) => item.id === id);
-  if (!target || !await confirmAction("移入回收站", `确认移除「${recordTitle(target)}」吗？`)) return;
+  if (!target) return;
   const deletedItem = { ...target, deletedAt: new Date().toISOString() };
   if (!await persist({
     items: items.value.filter((item) => item.id !== id),
     deletedItems: [deletedItem, ...deletedItems.value.filter((item) => item.id !== id)],
   })) return;
-  editorPopup.value = false;
-  showToast("已移入回收站");
+  if (fromSwipe) {
+    lastSwipeDeletedId.value = id;
+  } else {
+    editorPopup.value = false;
+    showToast("已移入回收站");
+  }
 }
 
 async function openRecycleBin() {
@@ -672,6 +835,7 @@ async function restoreDeletedItem(id: string) {
     items: [{ ...restored, updatedAt: new Date().toISOString() }, ...items.value.filter((record) => record.id !== id)],
     deletedItems: deletedItems.value.filter((record) => record.id !== id),
   })) return;
+  if (lastSwipeDeletedId.value === id) lastSwipeDeletedId.value = "";
   selectedDate.value = item.recordedAt;
   recyclePopup.value = false;
   showToast("记录已恢复");
@@ -1175,26 +1339,35 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   font-weight: 500;
 }
 
+.summary-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: auto;
+}
+
 .summary-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 2px;
   width: 100%;
-  height: 30px;
-  margin-top: auto;
+  height: 34px;
   border: 0;
-  border-radius: 999px;
-  background: var(--header-icon-bg);
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: 700;
+  border-radius: 10px;
+  font-size: 18px;
+  transition: filter 0.15s ease, transform 0.15s ease;
 }
 
-.camera-action {
-  background: transparent;
-  border: 1px solid var(--divider);
+.summary-action:active {
+  transform: scale(0.95);
 }
+
+.summary-actions.food .summary-action { background: #f0a25a; color: #fff; }
+.summary-actions.weight .summary-action { background: #4f86c6; color: #fff; }
+.summary-actions.exercise .summary-action { background: #3f9a68; color: #fff; }
+.summary-actions.food .camera-action { background: #fff1df; color: #8c4e17; }
+.summary-actions.weight .camera-action { background: #e7f0ff; color: #26588e; }
+.summary-actions.exercise .camera-action { background: #e4f4e9; color: #256846; }
 
 .log-panel, .analysis-panel {
   margin-top: 18px;
@@ -1294,21 +1467,6 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   line-height: 26px;
 }
 
-.analysis-dates {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.analysis-note {
-  margin: 8px 0 0;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
 .log-heading > span {
   padding: 3px 10px;
   border-radius: 999px;
@@ -1355,10 +1513,48 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 
 .record-entry {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
+  background: var(--surface);
+  transition: transform 0.18s ease-out;
+}
+
+.record-entry.swiping {
+  transition: none;
+}
+
+.record-swipe {
+  position: relative;
+  overflow: hidden;
   border-top: 1px solid var(--divider);
+  touch-action: pan-y pinch-zoom;
+  user-select: none;
+}
+
+.swipe-delete {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 18px;
+  background: var(--swipe-delete-bg);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.swipe-undo {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px;
+  border: 0;
+  background: var(--surface-soft);
+  color: var(--accent);
+  font-size: 13px;
 }
 
 .record-row {
@@ -1452,6 +1648,63 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   font-weight: 400;
 }
 
+.meal-field {
+  display: grid;
+  gap: 6px;
+}
+
+.meal-field-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.meal-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.meal-options button {
+  min-height: 42px;
+  padding: 8px 4px;
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  background: var(--field-bg);
+  color: var(--text-main);
+  font-size: 15px;
+}
+
+.meal-options button.active {
+  border-color: transparent;
+  background: var(--submit-btn-bg);
+  color: #fff;
+  font-weight: 700;
+}
+
+.weight-stepper {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 48px;
+  gap: 8px;
+}
+
+.weight-stepper input {
+  text-align: center;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.weight-stepper button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  background: var(--field-bg);
+  color: var(--accent);
+  font-size: 18px;
+}
+
 .photo-field {
   display: grid;
   gap: 8px;
@@ -1491,8 +1744,13 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 .exercise-fields {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.exercise-fields label {
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .editor-actions {
@@ -1514,17 +1772,22 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   color: #fff;
 }
 
+.save-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 @media (hover: hover) {
-  .record-entry:hover, .record-row:hover, .summary-main:hover .summary-action, .camera-action:hover {
+  .summary-action:hover {
+    filter: brightness(0.96);
+  }
+
+  .record-entry:hover, .record-row:hover {
     background: var(--surface-soft);
   }
 }
 
 @media (max-width: 360px) {
-  .summary-action {
-    font-size: 12px;
-  }
-
   .recycle-item {
     flex-wrap: wrap;
   }

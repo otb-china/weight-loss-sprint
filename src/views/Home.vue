@@ -135,8 +135,8 @@
               <button v-if="item.photo" class="record-thumbnail" type="button" aria-label="查看记录照片" @click="previewPhoto(item.photo)">
                 <img :src="item.photo" alt="" loading="lazy" draggable="false" />
               </button>
-              <button class="record-row" type="button" @click="openEditor(item.kind, item)">
-                <span class="summary-icon" :class="item.kind"><el-icon><component :is="icons[item.kind]" /></el-icon></span>
+              <button class="record-row" :class="{ 'has-photo': item.photo }" type="button" @click="openEditor(item.kind, item)">
+                <span v-if="!item.photo" class="summary-icon" :class="item.kind"><el-icon><component :is="icons[item.kind]" /></el-icon></span>
                 <strong class="record-copy">{{ recordTitle(item) }}</strong>
                 <span class="record-kind" :class="item.kind">{{ item.kind === 'food' && item.meal ? mealLabels[item.meal] : labels[item.kind] }}</span>
                 <el-icon class="record-arrow"><ArrowRight /></el-icon>
@@ -1591,7 +1591,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   background: var(--surface);
   transition: transform 0.18s ease-out;
 }
@@ -1681,10 +1681,18 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   background: var(--field-bg);
 }
 
+.record-row.has-photo {
+  padding-left: 0;
+}
+
+.record-thumbnail {
+  margin-left: 4px;
+}
+
 .record-thumbnail img {
   display: block;
-  width: 44px;
-  height: 44px;
+  width: 34px;
+  height: 34px;
   object-fit: cover;
 }
 

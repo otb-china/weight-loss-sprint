@@ -9,6 +9,7 @@ interface RecordBase {
   note: string;
   updatedAt: string;
   photo?: string;
+  photoId?: string;
 }
 
 export type SprintRecord = RecordBase & (

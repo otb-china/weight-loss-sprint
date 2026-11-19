@@ -108,7 +108,7 @@
       <section class="log-panel" aria-labelledby="log-heading">
         <div class="log-heading">
           <h2 id="log-heading">当天明细</h2>
-          <span>{{ dayRecords.length }} 条</span>
+          <span v-if="recordsReady">{{ dayRecords.length }} 条</span>
         </div>
         <div v-if="dayRecords.length || undoRecord" class="record-list">
           <div v-if="undoRecord" class="record-swipe"
@@ -128,11 +128,12 @@
             </span>
             <div class="record-entry" :class="{ swiping: swipedRecordId === item.id }"
               :style="swipedRecordId === item.id ? { transform: `translateX(${swipeOffset}px)` } : undefined">
-              <button v-if="item.photo" class="record-thumbnail" type="button" aria-label="查看记录照片" @click="previewPhoto(item.photo)">
-                <img :src="item.photo" alt="" loading="lazy" draggable="false" />
+              <button v-if="item.photoId" class="record-thumbnail" type="button" aria-label="查看记录照片" @click="previewPhoto('', item.photoId)">
+                <img v-if="thumbnails.has(item.photoId)" :src="thumbnails.get(item.photoId)" alt="" loading="lazy" draggable="false" />
+                <el-icon v-else><Camera /></el-icon>
               </button>
-              <button class="record-row" :class="{ 'has-photo': item.photo }" type="button" @click="openEditor(item.kind, item)">
-                <span v-if="!item.photo" class="summary-icon" :class="item.kind"><el-icon><component :is="icons[item.kind]" /></el-icon></span>
+              <button class="record-row" :class="{ 'has-photo': item.photoId }" type="button" @click="openEditor(item.kind, item)">
+                <span v-if="!item.photoId" class="summary-icon" :class="item.kind"><el-icon><component :is="icons[item.kind]" /></el-icon></span>
                 <strong class="record-copy">{{ recordTitle(item) }}</strong>
                 <span class="record-kind" :class="item.kind">{{ item.kind === 'food' && item.meal ? mealLabels[item.meal] : labels[item.kind] }}</span>
                 <el-icon class="record-arrow"><ArrowRight /></el-icon>
@@ -142,8 +143,11 @@
         </div>
         <div v-else class="empty-state">
           <el-icon class="empty-icon"><Calendar /></el-icon>
-          <strong>这一天还没有记录</strong>
-          <span>点击上方卡片，记下饮食、体重或运动</span>
+          <strong v-if="!recordsReady" role="status">{{ recordLoadError || "正在读取本地记录…" }}</strong>
+          <template v-else>
+            <strong>这一天还没有记录</strong>
+            <span>点击上方卡片，记下饮食、体重或运动</span>
+          </template>
         </div>
       </section>
     </main>
@@ -157,15 +161,16 @@
           </button>
         </div>
         <div class="photo-field">
-          <button v-if="form.photo" class="editor-photo" type="button" aria-label="查看记录照片" @click="previewPhoto(form.photo)">
-            <img :src="form.photo" alt="" />
+          <button v-if="form.photo || editorPhotoId" class="editor-photo" type="button" aria-label="查看记录照片" @click="previewPhoto(form.photo, editorPhotoId)">
+            <img v-if="form.photo || thumbnails.has(editorPhotoId)" :src="form.photo || thumbnails.get(editorPhotoId)" alt="" />
+            <el-icon v-else><Camera /></el-icon>
           </button>
           <div class="photo-actions">
             <button type="button" :disabled="photoBusy || saving" @click="takePhoto()"><el-icon><Camera /></el-icon>拍照</button>
             <button type="button" :disabled="photoBusy || saving" @click="galleryInput?.click()">从相册选图</button>
-            <button v-if="form.photo && form.kind !== 'food'" type="button" :disabled="photoBusy || saving"
+            <button v-if="(form.photo || editorPhotoId) && form.kind !== 'food'" type="button" :disabled="photoBusy || saving"
               @click="runPhotoRecognition()">重新识别</button>
-            <button v-if="form.photo" type="button" :disabled="saving" @click="removePhoto">移除照片</button>
+            <button v-if="form.photo || editorPhotoId" type="button" :disabled="saving" @click="removePhoto">移除照片</button>
           </div>
           <p v-if="photoStatus" class="photo-status" role="status">{{ photoStatus }}</p>
         </div>
@@ -178,7 +183,7 @@
           </div>
         </div>
         <label v-if="form.kind === 'food'">
-          {{ form.photo ? "吃了什么（选填）" : "吃了什么" }}
+          {{ form.photo || editorPhotoId ? "吃了什么（选填）" : "吃了什么" }}
           <input v-model.trim="form.name" placeholder="例如：一碗燕麦粥、一个鸡蛋" />
         </label>
         <div v-if="form.kind === 'food' && frequentFoods.length" class="food-suggestions" role="group" aria-label="常吃的食物">
@@ -283,8 +288,11 @@ import SettingsPopup from "@/components/SettingsPopup.vue";
 import { DEFAULT_THEME, isThemeKey, themeOptions, type ThemeKey } from "@/config/themes";
 import { LStorage } from "@/utils/localStorage";
 import { mealLabels, type DeletedSprintRecord, type Meal, type RecordKind, type SprintData, type SprintRecord } from "@/types/tool";
-import { prepareRecordPhoto, recognizeRecordPhoto } from "@/utils/recordPhoto";
-import { readStoredRecords, writeStoredRecords } from "@/utils/sprintStorage";
+import { photoBlobToData, prepareRecordPhoto, recognizeRecordPhoto } from "@/utils/recordPhoto";
+import {
+  readBackupPhotos, readPhoto, readStoredRecords, readThumbnail, RecordsUpgradeBlockedError,
+  storeTheme, withoutInlinePhoto, writeStoredRecords,
+} from "@/utils/sprintStorage";
 import logoUrl from "@/assets/weight-loss-sprint-icon.svg";
 
 const PROJECT = "weight-loss-sprint";
@@ -296,11 +304,16 @@ const icons = { food: Food, weight: Odometer, exercise: Timer };
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 const dataStorage = LStorage.new(`${PROJECT}:records`);
-const themeStorage = LStorage.new(`${PROJECT}:theme`);
+let savingTheme = false;
 let storedRevision: number | undefined;
 const data = shallowRef<SprintData>({ items: [], deletedItems: [] });
 const recordsReady = ref(false);
+const recordLoadError = ref("");
 const saving = ref(false);
+let exporting = false;
+let previewing = false;
+let previewUrl: string | undefined;
+let unmounted = false;
 const items = computed(() => data.value.items);
 const deletedItems = computed(() => data.value.deletedItems.filter(isInRecycleWindow));
 const currentTheme = ref<ThemeKey>(DEFAULT_THEME);
@@ -340,6 +353,7 @@ const settingsPopup = ref(false);
 const recyclePopup = ref(false);
 const editorPopup = ref(false);
 const editingItemId = ref("");
+const editorPhotoId = ref("");
 let editorRecordDate = "";
 const cameraInput = ref<HTMLInputElement>();
 const galleryInput = ref<HTMLInputElement>();
@@ -386,7 +400,7 @@ const canSave = computed(() => {
   const filled = (value: number | string) => value !== "" && Number(value) > 0;
   switch (form.kind) {
     case "food":
-      return Boolean(form.meal) && Boolean(form.name.trim() || form.photo);
+      return Boolean(form.meal) && Boolean(form.name.trim() || form.photo || editorPhotoId.value);
     case "weight":
       return filled(form.amount);
     case "exercise":
@@ -408,6 +422,23 @@ const dayRecords = computed(() =>
   items.value.filter((item) => item.recordedAt === selectedDate.value)
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)),
 );
+const thumbnails = reactive(new Map<string, string>());
+watch(dayRecords, async (records, _previous, onCleanup) => {
+  let canceled = false;
+  onCleanup(() => {
+    canceled = true;
+    for (const url of thumbnails.values()) URL.revokeObjectURL(url);
+    thumbnails.clear();
+  });
+  const revision = storedRevision;
+  if (revision === undefined) return;
+  for (const { photoId } of records) {
+    if (canceled) break;
+    if (!photoId) continue;
+    const thumbnail = await readThumbnail(photoId, revision).catch(() => undefined);
+    if (!canceled && thumbnail) thumbnails.set(photoId, URL.createObjectURL(thumbnail));
+  }
+});
 const isToday = computed(() => selectedDate.value === todayDate.value);
 const analysisDateLabel = computed(() =>
   isToday.value ? "截至今天" : `截至${dayjs(selectedDate.value).format("M月D日")}`,
@@ -589,11 +620,12 @@ function isSprintRecord(value: unknown): value is SprintRecord {
     typeof record.id !== "string" || !record.id ||
     !isRecordDate(record.recordedAt) || typeof record.note !== "string" ||
     typeof record.updatedAt !== "string" || !Number.isFinite(Date.parse(record.updatedAt)) ||
-    (record.photo !== undefined && !isPhoto(record.photo))
+    (record.photo !== undefined && !isPhoto(record.photo)) ||
+    (record.photoId !== undefined && (record.photoId !== record.id || record.photo !== undefined))
   ) return false;
   switch (record.kind) {
     case "food":
-      return typeof record.name === "string" && Boolean(record.name.trim() || record.photo) &&
+      return typeof record.name === "string" && Boolean(record.name.trim() || record.photo || record.photoId) &&
         (record.meal === undefined || (typeof record.meal === "string" && Object.prototype.hasOwnProperty.call(mealLabels, record.meal)));
     case "weight":
       return isPositiveNumber(record.kilograms);
@@ -631,7 +663,10 @@ async function loadRecords() {
       const revision = await writeStoredRecords(undefined, [...initial.items, ...initial.deletedItems]);
       if (revision !== undefined) {
         storedRevision = revision;
-        data.value = initial;
+        data.value = {
+          items: initial.items.map(withoutInlinePhoto),
+          deletedItems: initial.deletedItems.map(withoutInlinePhoto),
+        };
         recordsReady.value = true;
         return;
       }
@@ -652,8 +687,8 @@ async function loadRecords() {
     storedRevision = stored.revision;
     data.value = loaded;
     recordsReady.value = true;
-  } catch {
-    showToast("读取本地记录失败");
+  } catch (error) {
+    recordLoadError.value = error instanceof RecordsUpgradeBlockedError ? error.message : "读取本地记录失败，请刷新后重试";
   }
 }
 
@@ -674,22 +709,33 @@ async function persist(next: SprintData) {
       return false;
     }
     storedRevision = revision;
-    data.value = next;
+    data.value = {
+      items: next.items.map(withoutInlinePhoto),
+      deletedItems: next.deletedItems.map(withoutInlinePhoto),
+    };
     return true;
-  } catch {
-    showToast("保存失败，请检查浏览器存储空间");
+  } catch (error) {
+    showToast(error instanceof DOMException && error.name === "QuotaExceededError"
+      ? "站点存储空间不足，本次改动未保存。请先备份已保存的记录"
+      : "保存失败，请检查浏览器存储空间");
     return false;
   } finally {
     saving.value = false;
   }
 }
 
-function setTheme(theme: ThemeKey) {
+async function setTheme(theme: ThemeKey) {
+  if (savingTheme) return;
+  savingTheme = true;
   try {
-    themeStorage.setter(theme);
+    await storeTheme(theme);
     currentTheme.value = theme;
-  } catch {
-    showToast("主题保存失败");
+  } catch (error) {
+    showToast(error instanceof DOMException && error.name === "QuotaExceededError"
+      ? "站点存储空间不足，主题未保存"
+      : "主题保存失败");
+  } finally {
+    savingTheme = false;
   }
 }
 
@@ -719,7 +765,8 @@ function openEditor(kind: RecordKind, item?: SprintRecord) {
   form.meal = item?.kind === "food" ? item.meal ?? mealByTime() : (item ? "" : mealByTime());
   form.distanceKm = item?.kind === "exercise" ? item.distanceKm ?? "" : "";
   form.calories = item?.kind === "exercise" ? item.calories ?? "" : "";
-  form.photo = item?.photo ?? "";
+  form.photo = "";
+  editorPhotoId.value = item?.photoId ?? "";
   editorRecordDate = item?.recordedAt ?? selectedDate.value;
   editorPopup.value = true;
 }
@@ -767,10 +814,34 @@ function takePhoto(kind?: RecordKind) {
 function removePhoto() {
   resetPhotoAttempt();
   form.photo = "";
+  editorPhotoId.value = "";
 }
 
-function previewPhoto(photo: string) {
-  showImagePreview({ images: [photo], showIndex: false, closeable: true, teleport: "body" });
+function closePhotoPreview() {
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  previewUrl = undefined;
+  previewing = false;
+}
+
+async function previewPhoto(draft: string, id?: string) {
+  if (previewing) return;
+  previewing = true;
+  try {
+    const photo = draft ? undefined : id && await readPhoto(id);
+    if (unmounted) return;
+    if (!draft && !photo) throw new Error("Missing photo");
+    previewUrl = photo ? URL.createObjectURL(photo) : undefined;
+    showImagePreview({
+      images: [previewUrl ?? draft],
+      showIndex: false,
+      closeable: true,
+      teleport: "body",
+      onClose: closePhotoPreview,
+    });
+  } catch {
+    closePhotoPreview();
+    if (!unmounted) showToast("无法读取照片");
+  }
 }
 
 async function onPhotoSelected(event: Event) {
@@ -789,6 +860,7 @@ async function onPhotoSelected(event: Event) {
     const photo = await prepareRecordPhoto(file);
     if (attempt !== photoAttempt) return;
     form.photo = photo;
+    editorPhotoId.value = "";
     photoStatus.value = "";
   } catch {
     if (attempt === photoAttempt) photoStatus.value = "无法读取这张照片，请重新拍照或选择图片。";
@@ -805,7 +877,8 @@ function currentPhotoMetrics() {
 
 async function runPhotoRecognition(original = currentPhotoMetrics()) {
   const { photo, kind } = form;
-  if (!editorPopup.value || !photo || kind === "food" || photoBusy.value || saving.value) return;
+  const photoId = editorPhotoId.value;
+  if (!editorPopup.value || (!photo && !photoId) || kind === "food" || photoBusy.value || saving.value) return;
 
   const attempt = ++photoAttempt;
   const controller = new AbortController();
@@ -813,7 +886,15 @@ async function runPhotoRecognition(original = currentPhotoMetrics()) {
   photoRecognizing.value = true;
   photoStatus.value = "正在识别照片…";
   try {
-    const result = await recognizeRecordPhoto(photo, kind, controller.signal);
+    let source = photo;
+    if (!source) {
+      const stored = await readPhoto(photoId);
+      if (attempt !== photoAttempt) return;
+      if (!stored) throw new Error("Missing photo");
+      source = await photoBlobToData(stored);
+    }
+    if (attempt !== photoAttempt) return;
+    const result = await recognizeRecordPhoto(source, kind, controller.signal);
     if (attempt !== photoAttempt) return;
     let filled = false;
     for (const field of ["amount", "distanceKm", "calories"] as const) {
@@ -845,6 +926,7 @@ async function saveItem() {
     note: previous?.note ?? "",
     updatedAt: new Date().toISOString(),
     photo: form.photo || undefined,
+    photoId: editorPhotoId.value || undefined,
   };
   let item: SprintRecord;
   switch (form.kind) {
@@ -1001,19 +1083,44 @@ function openImportExport() {
   importExportInfo.value.show = true;
 }
 
-function exportAllData() {
-  const backup = { project: PROJECT, items: items.value, deletedItems: data.value.deletedItems.filter(isInRecycleWindow) };
-  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const downloadLink = document.createElement("a");
-  downloadLink.href = url;
-  downloadLink.download = `${PROJECT}-backup-${today()}.json`;
-  document.body.appendChild(downloadLink);
-  downloadLink.click();
-  downloadLink.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  settingsPopup.value = false;
-  showToast("备份文件已导出");
+async function exportAllData() {
+  const revision = storedRevision;
+  if (revision === undefined || exporting) return;
+  exporting = true;
+  try {
+    const active = items.value;
+    const deleted = data.value.deletedItems.filter(isInRecycleWindow);
+    const photoIds = new Set([...active, ...deleted].flatMap((item) => item.photoId ? [item.photoId] : []));
+    const photos = await readBackupPhotos([...photoIds], revision);
+    const parts = ['{"project":', JSON.stringify(PROJECT), ',"items":['];
+    async function appendRecords(records: SprintRecord[]) {
+      for (const [index, { photoId, ...record }] of records.entries()) {
+        const attachment = photoId ? photos.get(photoId) : undefined;
+        if (attachment) record.photo = await photoBlobToData(attachment);
+        parts.push(index ? "," : "", JSON.stringify(record));
+      }
+    }
+    await appendRecords(active);
+    parts.push('],"deletedItems":[');
+    await appendRecords(deleted);
+    parts.push("]}");
+    if (unmounted) return;
+    const blob = new Blob(parts, { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const downloadLink = document.createElement("a");
+    downloadLink.href = url;
+    downloadLink.download = `${PROJECT}-backup-${today()}.json`;
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    downloadLink.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    settingsPopup.value = false;
+    showToast("备份文件已导出");
+  } catch {
+    if (!unmounted) showToast("导出失败，请刷新后重试");
+  } finally {
+    exporting = false;
+  }
 }
 
 function onImportFileLoaded(payload: { dataStr: string; fileName: string }) {
@@ -1024,7 +1131,8 @@ function onImportFileLoaded(payload: { dataStr: string; fileName: string }) {
 async function importData() {
   try {
     const backup: unknown = JSON.parse(importInfo.value.dataStr);
-    if (!isSprintData(backup) || !("project" in backup) || backup.project !== PROJECT) {
+    if (!isSprintData(backup) || !("project" in backup) || backup.project !== PROJECT ||
+      [...backup.items, ...backup.deletedItems].some((item) => item.photoId !== undefined)) {
       showToast("请选择本站导出的备份");
       return;
     }
@@ -1075,13 +1183,11 @@ function updateScrollTopVisibility() {
 let todayDateTimer: number | undefined;
 
 onMounted(() => {
-  void loadRecords();
-  try {
-    const storedTheme: unknown = themeStorage.getter();
+  void storeTheme().then((storedTheme) => {
     if (isThemeKey(storedTheme)) currentTheme.value = storedTheme;
-  } catch {
+  }).catch(() => {
     showToast("读取主题失败");
-  }
+  }).finally(loadRecords);
   updateScrollTopVisibility();
   window.addEventListener("scroll", updateScrollTopVisibility, { passive: true });
   todayDateTimer = window.setInterval(() => {
@@ -1090,6 +1196,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  unmounted = true;
+  closePhotoPreview();
   resetPhotoAttempt();
   window.removeEventListener("scroll", updateScrollTopVisibility);
   window.clearInterval(todayDateTimer);

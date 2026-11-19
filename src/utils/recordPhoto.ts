@@ -1,12 +1,28 @@
 import workerPath from "tesseract.js/dist/worker.min.js?url";
 
-export async function prepareRecordPhoto(file: File) {
-  const url = URL.createObjectURL(file);
+export function photoDataToBlob(data: string) {
+  const binary = atob(data.slice(data.indexOf(",") + 1));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: "image/jpeg" });
+}
+
+export function photoBlobToData(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function resizePhoto(photo: Blob, maxSide: number) {
+  const url = URL.createObjectURL(photo);
   try {
     const image = new Image();
     image.src = url;
     await image.decode();
-    const scale = Math.min(1, 2200 / Math.max(image.naturalWidth, image.naturalHeight));
+    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
@@ -15,10 +31,22 @@ export async function prepareRecordPhoto(file: File) {
     context.fillStyle = "#fff";
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.86);
+    return canvas;
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+export async function createRecordThumbnail(photo: Blob) {
+  const canvas = await resizePhoto(photo, 320);
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Thumbnail unavailable")), "image/jpeg", 0.8);
+  });
+}
+
+export async function prepareRecordPhoto(file: File) {
+  const canvas = await resizePhoto(file, 2200);
+  return canvas.toDataURL("image/jpeg", 0.86);
 }
 
 export async function recognizeRecordPhoto(photo: string, kind: "weight" | "exercise", signal: AbortSignal) {
